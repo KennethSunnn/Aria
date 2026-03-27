@@ -11,7 +11,7 @@ if exist "%PYTHON_EXE%" (
     if %errorlevel%==0 (
         start "" python web_app.py
     ) else (
-        powershell -NoProfile -Command "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('未找到 Python。请先安装 Python 或创建 .venv 后重试。','ARIA 启动失败')"
+        powershell -NoProfile -Command "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('Python not found. Install Python or create .venv first.','ARIA launch failed')"
         exit /b 1
     )
 )

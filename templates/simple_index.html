@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ARIA 智能助手</title>
+    <title data-i18n="app.title">ARIA Assistant</title>
     <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Font Awesome -->
@@ -471,7 +471,8 @@
                     </div>
                 </div>
                 <div class="col-md-6 text-right">
-                    <div class="d-inline-block">
+                    <div class="d-inline-flex align-items-center gap-2">
+                        <div data-lang-switcher></div>
                         <span class="app-badge"><i class="fa fa-magic" style="margin-right:6px;"></i> ARIA v2</span>
                     </div>
                 </div>
@@ -485,17 +486,17 @@
             <ul class="nav nav-tabs" id="main-tabs" role="tablist">
                 <li class="nav-item" role="presentation">
                     <button class="nav-link active" id="chat-tab" data-bs-toggle="tab" data-bs-target="#chat" type="button" role="tab" aria-controls="chat" aria-selected="true">
-                        <i class="fa fa-comments mr-2"></i>对话主面板
+                        <i class="fa fa-comments mr-2"></i><span data-i18n="app.tab.chat">Chat</span>
                     </button>
                 </li>
                 <li class="nav-item" role="presentation">
                     <button class="nav-link" id="methodology-tab" data-bs-toggle="tab" data-bs-target="#methodology" type="button" role="tab" aria-controls="methodology" aria-selected="false">
-                        <i class="fa fa-book mr-2"></i>经验中心
+                        <i class="fa fa-book mr-2"></i><span data-i18n="app.tab.methods">Experience Center</span>
                     </button>
                 </li>
                 <li class="nav-item" role="presentation">
                     <button class="nav-link" id="settings-tab" data-bs-toggle="tab" data-bs-target="#settings" type="button" role="tab" aria-controls="settings" aria-selected="false">
-                        <i class="fa fa-cog mr-2"></i>系统设置
+                        <i class="fa fa-cog mr-2"></i><span data-i18n="app.tab.settings">Settings</span>
                     </button>
                 </li>
             </ul>
@@ -513,18 +514,18 @@
                     <div class="card panel-card" id="panel-card-left">
                         <div class="card-header">
                             <div class="d-flex justify-content-between align-items-center">
-                                <h5 class="card-title mb-0 panel-title">会话列表</h5>
+                                <h5 class="card-title mb-0 panel-title" data-i18n="app.panel.sessions">Sessions</h5>
                                 <div class="d-flex align-items-center gap-2 panel-controls">
-                                    <button class="btn btn-primary btn-sm">
-                                        <i class="fa fa-plus"></i> 新建
+                                    <button class="btn btn-primary btn-sm" id="new-conversation-btn">
+                                        <i class="fa fa-plus"></i> <span data-i18n="common.new">New</span>
                                     </button>
-                                    <button class="btn btn-outline-secondary btn-sm panel-collapse-btn" data-panel="left" title="折叠">
+                                    <button class="btn btn-outline-secondary btn-sm panel-collapse-btn" data-panel="left" title="Collapse">
                                         <i class="fa fa-minus"></i>
                                     </button>
-                                    <button class="btn btn-outline-secondary btn-sm panel-maximize-btn" data-panel="left" title="放大">
+                                    <button class="btn btn-outline-secondary btn-sm panel-maximize-btn" data-panel="left" title="Maximize">
                                         <i class="fa fa-expand"></i>
                                     </button>
-                                    <button class="btn btn-outline-secondary btn-sm panel-restore-btn" data-panel="left" title="还原">
+                                    <button class="btn btn-outline-secondary btn-sm panel-restore-btn" data-panel="left" title="Restore">
                                         <i class="fa fa-undo"></i>
                                     </button>
                                 </div>
@@ -532,11 +533,11 @@
                         </div>
                         <div class="card-body">
                             <div class="mb-3">
-                                <input type="text" id="conversation-search-input" class="form-control form-control-sm" placeholder="搜索会话">
+                                <input type="text" id="conversation-search-input" class="form-control form-control-sm" data-i18n="common.search" data-i18n-attr="placeholder" placeholder="Search">
                             </div>
                             <div class="sidebar" id="conversation-list">
                                 <div class="text-center text-muted p-3" id="chat-sessions-empty-hint">
-                                    暂无会话记录
+                                    <span data-i18n="app.empty.sessions">No sessions yet</span>
                                 </div>
                             </div>
                         </div>
@@ -548,18 +549,18 @@
                     <div class="card panel-card" id="panel-card-center">
                         <div class="card-header">
                             <div class="d-flex justify-content-between align-items-center">
-                                <h5 id="chat-panel-title" class="card-title mb-0 panel-title">对话框</h5>
+                                <h5 id="chat-panel-title" class="card-title mb-0 panel-title" data-i18n="app.panel.chat">Chat</h5>
                                 <div class="d-flex align-items-center gap-2 panel-controls">
                                     <button class="btn btn-outline-secondary btn-sm" id="chat-clear-btn">
-                                        <i class="fa fa-trash"></i> 清空
+                                        <i class="fa fa-trash"></i> <span data-i18n="common.clear">Clear</span>
                                     </button>
-                                    <button class="btn btn-outline-secondary btn-sm panel-collapse-btn" data-panel="center" title="折叠">
+                                    <button class="btn btn-outline-secondary btn-sm panel-collapse-btn" data-panel="center" title="Collapse">
                                         <i class="fa fa-minus"></i>
                                     </button>
-                                    <button class="btn btn-outline-secondary btn-sm panel-maximize-btn" data-panel="center" title="放大">
+                                    <button class="btn btn-outline-secondary btn-sm panel-maximize-btn" data-panel="center" title="Maximize">
                                         <i class="fa fa-expand"></i>
                                     </button>
-                                    <button class="btn btn-outline-secondary btn-sm panel-restore-btn" data-panel="center" title="还原">
+                                    <button class="btn btn-outline-secondary btn-sm panel-restore-btn" data-panel="center" title="Restore">
                                         <i class="fa fa-undo"></i>
                                     </button>
                                 </div>
@@ -567,17 +568,17 @@
                         </div>
                         <div class="card-body chat-area">
                             <div class="text-center text-muted" id="chat-empty-hint">
-                                还没有对话记录。输入问题后点击“发送”开始。
+                                <span data-i18n="app.empty.chat">No messages yet. Type and send to start.</span>
                             </div>
                         </div>
                         <div class="card-footer">
                             <div class="input-group">
-                                <input type="text" class="form-control" placeholder="输入问题...">
+                                <input type="text" class="form-control" data-i18n="app.input.chat" data-i18n-attr="placeholder" placeholder="Type your question...">
                                 <button class="btn btn-primary" id="chat-send-btn">
-                                    <i class="fa fa-paper-plane"></i> 发送
+                                    <i class="fa fa-paper-plane"></i> <span data-i18n="common.send">Send</span>
                                 </button>
                                 <button class="btn btn-outline-danger" id="chat-cancel-btn" disabled style="display: none;">
-                                    <i class="fa fa-stop"></i> 中止
+                                    <i class="fa fa-stop"></i> <span data-i18n="common.cancel">Cancel</span>
                                 </button>
                             </div>
                         </div>
@@ -590,16 +591,16 @@
                     <div class="card panel-card" id="panel-card-right">
                         <div class="card-header">
                             <div class="d-flex justify-content-between align-items-center">
-                                <h5 class="card-title mb-0 panel-title">协作日志</h5>
+                                <h5 class="card-title mb-0 panel-title" data-i18n="app.panel.collab">Collaboration Log</h5>
                                 <div class="d-flex align-items-center gap-2 panel-controls">
-                                    <span class="text-muted" style="font-size:12px;">统一协作视图</span>
-                                    <button class="btn btn-outline-secondary btn-sm panel-collapse-btn" data-panel="right" title="折叠">
+                                    <span class="text-muted" style="font-size:12px;" data-i18n="app.collabUnified">Unified collaboration view</span>
+                                    <button class="btn btn-outline-secondary btn-sm panel-collapse-btn" data-panel="right" title="Collapse">
                                         <i class="fa fa-minus"></i>
                                     </button>
-                                    <button class="btn btn-outline-secondary btn-sm panel-maximize-btn" data-panel="right" title="放大">
+                                    <button class="btn btn-outline-secondary btn-sm panel-maximize-btn" data-panel="right" title="Maximize">
                                         <i class="fa fa-expand"></i>
                                     </button>
-                                    <button class="btn btn-outline-secondary btn-sm panel-restore-btn" data-panel="right" title="还原">
+                                    <button class="btn btn-outline-secondary btn-sm panel-restore-btn" data-panel="right" title="Restore">
                                         <i class="fa fa-undo"></i>
                                     </button>
                                 </div>
@@ -607,7 +608,7 @@
                         </div>
                     <div class="card-body log-area" id="execution-log-area">
                             <div class="text-center text-muted" id="execution-empty-hint">
-                                暂无日志。发送任务后这里会显示处理过程。
+                                <span data-i18n="app.empty.logs">No logs yet. Send a task to view process.</span>
                             </div>
                         </div>
                     </div>
@@ -621,15 +622,15 @@
                 <div class="card-header">
                     <div class="d-flex justify-content-between align-items-center">
                         <div>
-                            <h5 class="card-title mb-0">经验中心</h5>
-                            <p class="text-sm text-muted mb-0">管理系统内置和自定义的经验方案模板，提升任务处理效率</p>
+                            <h5 class="card-title mb-0" data-i18n="app.tab.methods">Experience Center</h5>
+                            <p class="text-sm text-muted mb-0">Manage built-in and custom method templates to improve task efficiency.</p>
                         </div>
                         <div>
                             <button class="btn btn-outline-secondary btn-sm mr-2">
-                                <i class="fa fa-upload"></i> 导入
+                                <i class="fa fa-upload"></i> <span data-i18n="app.method.import">Import</span>
                             </button>
                             <button class="btn btn-primary btn-sm">
-                                <i class="fa fa-plus"></i> 新建经验
+                                <i class="fa fa-plus"></i> <span data-i18n="app.method.new">New Method</span>
                             </button>
                         </div>
                     </div>
@@ -638,28 +639,28 @@
                     <div class="row mb-4">
                         <div class="col-md-6">
                             <div class="input-group">
-                                <input id="methodology-search-input" type="text" class="form-control" placeholder="搜索经验名称、标签、描述">
+                                <input id="methodology-search-input" type="text" class="form-control" placeholder="Search method name, tags, description">
                                 <button id="methodology-search-btn" class="btn btn-primary" type="button">
-                                    <i class="fa fa-search"></i> 搜索
+                                    <i class="fa fa-search"></i> <span data-i18n="common.search">Search</span>
                                 </button>
                             </div>
                         </div>
                         <div class="col-md-3">
-                            <select class="form-select">
-                                <option value="">全部分类</option>
-                                <option value="数据分析">数据分析</option>
-                                <option value="产品设计">产品设计</option>
-                                <option value="项目管理">项目管理</option>
-                                <option value="其他">其他</option>
+                            <select class="form-select" id="method-category-filter">
+                                <option value="">All Categories</option>
+                                <option value="数据分析">Data Analysis</option>
+                                <option value="产品设计">Product Design</option>
+                                <option value="项目管理">Project Management</option>
+                                <option value="其他">Other</option>
                             </select>
                         </div>
                         <div class="col-md-3">
-                            <select class="form-select">
-                                <option value="">全部标签</option>
+                            <select class="form-select" id="method-tag-filter">
+                                <option value="">All Tags</option>
                                 <option value="Python">Python</option>
-                                <option value="爬虫">爬虫</option>
-                                <option value="数据分析">数据分析</option>
-                                <option value="产品设计">产品设计</option>
+                                <option value="爬虫">Crawler</option>
+                                <option value="数据分析">Data Analysis</option>
+                                <option value="产品设计">Product Design</option>
                             </select>
                         </div>
                     </div>
@@ -669,16 +670,16 @@
                             <div class="card h-100">
                                 <div class="card-header">
                                     <div class="d-flex justify-content-between align-items-center">
-                                        <h6 class="card-title mb-0">经验列表</h6>
+                                        <h6 class="card-title mb-0" data-i18n="app.method.listTitle">Methods</h6>
                                         <button class="btn btn-outline-danger btn-sm" id="delete-selected-methodologies-btn" type="button">
-                                            批量删除选中
+                                            Delete Selected
                                         </button>
                                     </div>
                                 </div>
                                 <div class="card-body p-0">
                                     <div class="sidebar" id="methodology-list">
                                         <div class="p-3 text-center text-muted">
-                                            正在加载经验...
+                                            <span data-i18n="app.method.loading">Loading methods...</span>
                                         </div>
                                     </div>
                                 </div>
@@ -688,12 +689,12 @@
                         <div class="col-md-8">
                             <div class="card h-100">
                                 <div class="card-header">
-                                    <h6 class="card-title mb-0">选择一条经验查看详情</h6>
+                                    <h6 class="card-title mb-0" data-i18n="app.method.detailTitle">Select a method to view details</h6>
                                 </div>
                                 <div class="card-body" id="methodology-detail-body">
                                     <div class="text-center text-muted">
                                         <i class="fa fa-folder-open fa-3x mb-3"></i>
-                                        <p>请从左侧列表中选择一条经验查看详细内容</p>
+                                        <p data-i18n="app.method.pickForDetail">Select one method on the left to view details.</p>
                                     </div>
                                 </div>
                             </div>
@@ -707,20 +708,17 @@
         <div class="tab-pane fade" id="settings" role="tabpanel" aria-labelledby="settings-tab">
             <div class="card">
                 <div class="card-header">
-                    <h5 class="card-title mb-0">系统设置</h5>
+                    <h5 class="card-title mb-0" data-i18n="app.settings.title">Settings</h5>
                 </div>
                 <div class="card-body">
                     <div class="mb-4">
-                        <h6 class="font-weight-bold mb-3">大模型 API（环境变量）</h6>
-                        <p class="text-muted small mb-2">
-                            出于安全与开源协作考虑，密钥不在网页内保存。请在项目根目录将 <code>.env.example</code> 复制为 <code>.env</code>，
-                            设置 <code>VOLCANO_API_KEY</code>（或与后端一致的 <code>ARK_API_KEY</code>），保存后重启 <code>python web_app.py</code>。
-                        </p>
+                        <h6 class="font-weight-bold mb-3" data-i18n="app.settings.apiTitle">Model API (environment variable)</h6>
+                        <p class="text-muted small mb-2" data-i18n="app.settings.apiDesc">For security and open-source collaboration, keys are not stored in web UI. Copy .env.example to .env, set VOLCANO_API_KEY (or ARK_API_KEY), and restart python web_app.py.</p>
                         <button type="button" class="btn btn-outline-secondary btn-sm" id="refresh-api-key-status-btn">
-                            <i class="fa fa-refresh mr-1"></i>刷新配置状态
+                            <i class="fa fa-refresh mr-1"></i><span data-i18n="common.refresh">Refresh</span>
                         </button>
                         <div class="mt-2" id="api-key-status">
-                            <span class="text-muted"><i class="fa fa-info-circle mr-1"></i> 正在检测…</span>
+                            <span class="text-muted"><i class="fa fa-info-circle mr-1"></i> <span data-i18n="app.settings.apiDetecting">Detecting...</span></span>
                         </div>
                     </div>
                 </div>
@@ -732,8 +730,12 @@
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/i18n.js"></script>
     <script>
-        $(document).ready(function() {
+        $(document).ready(async function() {
+            await window.ariaI18n.init();
+            const tr = (k, fb = '') => (window.ariaI18n ? window.ariaI18n.t(k, fb) : (fb || k));
+            const tf = (k, vars = {}, fb = '') => (window.ariaI18n ? window.ariaI18n.format(tr(k, fb), vars) : (fb || k));
             let currentConversationId = null;
             let workflowPollTimer = null;
             let workflowEventSource = null;
@@ -774,35 +776,85 @@
             }
 
             function roleBadge(role) {
-                return `<span class="badge bg-light text-dark">${escapeHtml(role || '成员')}</span>`;
+                return `<span class="badge bg-light text-dark">${escapeHtml(role || tr('app.method.general', 'General'))}</span>`;
             }
 
             function statusMeta(status) {
-                if (status === 'success' || status === 'completed') return { text: '完成', cls: 'agent-status-success' };
-                if (status === 'error') return { text: '异常', cls: 'agent-status-error' };
-                return { text: '进行中', cls: 'agent-status-running' };
+                if (status === 'success' || status === 'completed') return { text: tr('app.status.done', 'Done'), cls: 'agent-status-success' };
+                if (status === 'error') return { text: tr('app.status.error', 'Error'), cls: 'agent-status-error' };
+                return { text: tr('app.status.running', 'Running'), cls: 'agent-status-running' };
             }
 
             function agentInitial(name) {
                 const s = (name || '').trim();
-                if (!s) return '员';
+                if (!s) return 'A';
                 return escapeHtml(s.slice(0, 1));
             }
 
-            function roleAvatarMeta(role) {
-                const r = String(role || '');
-                if (r.includes('PM') || r.includes('项目经理')) return { code: 'PM', cls: 'pm' };
-                if (r.includes('QA') || r.includes('质检')) return { code: 'QA', cls: 'qa' };
-                if (r.includes('KS') || r.includes('知识')) return { code: 'KS', cls: 'ks' };
-                if (r.includes('VE') || r.includes('视觉')) return { code: 'VE', cls: 've' };
-                if (r.includes('SE') || r.includes('语音')) return { code: 'SE', cls: 'se' };
-                if (r.includes('EXE') || r.includes('执行')) return { code: 'EX', cls: 'exe' };
-                return { code: agentInitial(r), cls: 'other' };
+            function roleKindFromMeta(roleText, agentCode) {
+                const r = String(roleText || '').toLowerCase();
+                const c = String(agentCode || '').toLowerCase();
+                if (r.includes('pm') || r.includes('项目经理') || c.includes('taskparser') || c.includes('tasksplitter')) return 'pm';
+                if (r.includes('qa') || r.includes('质检') || c.includes('qualitychecker')) return 'qa';
+                if (r.includes('ks') || r.includes('知识') || c.includes('methodsearcher') || c.includes('methodsaver')) return 'ks';
+                if (r.includes('ve') || r.includes('视觉') || c.includes('visionexecagent')) return 've';
+                if (r.includes('se') || r.includes('语音') || c.includes('speechexecagent')) return 'se';
+                if (r.includes('exe') || r.includes('执行') || c.includes('textexecagent') || c.includes('solutionlearner')) return 'exe';
+                return 'other';
+            }
+
+            function localizedRoleLabel(kind, fallbackRole) {
+                if (kind === 'pm') return tr('app.role.pm', 'Project Manager');
+                if (kind === 'qa') return tr('app.role.qa', 'Quality Analyst');
+                if (kind === 'ks') return tr('app.role.ks', 'Knowledge Specialist');
+                if (kind === 've') return tr('app.role.ve', 'Vision Specialist');
+                if (kind === 'se') return tr('app.role.se', 'Speech Specialist');
+                if (kind === 'exe') return tr('app.role.exe', 'Execution Specialist');
+                return fallbackRole || tr('app.method.general', 'General');
+            }
+
+            function simpleHash(input) {
+                const s = String(input || '');
+                let h = 0;
+                for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+                return h;
+            }
+
+            function localizedAgentName(evt) {
+                const locale = (window.ariaI18n && window.ariaI18n.locale) || 'en';
+                const rawName = evt?.agent_name || '';
+                if (locale === 'zh') {
+                    return rawName || tr('app.stream.collaborator', '协作者');
+                }
+                const kind = roleKindFromMeta(evt?.agent_role || '', evt?.agent_code || '');
+                const baseMap = {
+                    pm: 'Alex',
+                    qa: 'Jordan',
+                    ks: 'Morgan',
+                    ve: 'Skyler',
+                    se: 'Taylor',
+                    exe: 'Riley',
+                    other: 'Agent'
+                };
+                const seed = `${rawName}|${evt?.agent_code || ''}|${evt?.agent_role || ''}`;
+                const tag = (simpleHash(seed) % 90) + 10;
+                return `${baseMap[kind] || 'Agent'}-${tag}`;
+            }
+
+            function roleAvatarMeta(role, agentCode) {
+                const kind = roleKindFromMeta(role, agentCode);
+                if (kind === 'pm') return { code: 'PM', cls: 'pm' };
+                if (kind === 'qa') return { code: 'QA', cls: 'qa' };
+                if (kind === 'ks') return { code: 'KS', cls: 'ks' };
+                if (kind === 've') return { code: 'VE', cls: 've' };
+                if (kind === 'se') return { code: 'SE', cls: 'se' };
+                if (kind === 'exe') return { code: 'EX', cls: 'exe' };
+                return { code: agentInitial(role || ''), cls: 'other' };
             }
 
             function renderEventDetail(detail) {
                 if (!detail || typeof detail !== 'object' || !Object.keys(detail).length) {
-                    return '<div class="text-muted">暂无具体工作明细。</div>';
+                    return `<div class="text-muted">${tr('app.stream.noDetail', 'No detail available.')}</div>`;
                 }
                 return Object.entries(detail).map(([k, v]) => {
                     const value = typeof v === 'object' ? JSON.stringify(v) : String(v);
@@ -842,11 +894,11 @@
                 ['left', 'center', 'right'].forEach((key) => {
                     if (maxPanel ? key !== maxPanel : panelState[key].collapsed) collapsed.push(key);
                 });
-                const nameMap = { left: '会话列表', center: '对话框', right: '协作日志' };
+                const nameMap = { left: tr('app.panel.sessions', 'Sessions'), center: tr('app.panel.chat', 'Chat'), right: tr('app.panel.collab', 'Collaboration Log') };
                 const $bar = $('#collapsed-panels-bar');
                 $bar.empty();
                 collapsed.forEach((key) => {
-                    $bar.append(`<button class="collapsed-panel-chip" data-panel="${key}" type="button">展开 ${nameMap[key]}</button>`);
+                    $bar.append(`<button class="collapsed-panel-chip" data-panel="${key}" type="button">${tr('app.story.expandGraph', 'Expand Graph')} ${nameMap[key]}</button>`);
                 });
                 if (collapsed.length) {
                     $bar.removeClass('d-none');
@@ -873,11 +925,11 @@
                 const $graph = $('#workflow-story-container');
                 if (!$graph.length) return;
                 if (isStoryCollapsed) {
-                    $graph.html('<div class="story-collapsed-hint">Story Graph 已折叠。点击“展开图谱”可查看任务分发详情。</div>');
+                    $graph.html(`<div class="story-collapsed-hint">${tr('app.story.collapsedHint', 'Story Graph is collapsed. Click Expand Graph to view details.')}</div>`);
                     return;
                 }
                 if (!events || !events.length) {
-                    $graph.html('<div class="text-muted">暂无工作流数据。</div>');
+                    $graph.html(`<div class="text-muted">${tr('app.story.empty', 'No workflow data.')}</div>`);
                     return;
                 }
                 const timelineEvents = buildTimelineEvents(events, { showDetails: true, milestonesOnly: false });
@@ -887,7 +939,7 @@
                 const saveEvt = [...timelineEvents].reverse().find((evt) => evt.stage === 'method_save');
                 const doneEvt = [...timelineEvents].reverse().find((evt) => evt.stage === 'agent_destroy');
                 if (!taskSplit && !executeEvents.length) {
-                    $graph.html('<div class="text-muted">当前暂无可视化分发数据。</div>');
+                    $graph.html(`<div class="text-muted">${tr('app.story.noDispatchData', 'No dispatch visualization data yet.')}</div>`);
                     return;
                 }
 
@@ -897,10 +949,10 @@
                     return `${s.slice(0, Math.max(1, maxChars - 1))}…`;
                 }
 
-                const rootTitle = (taskSplit && taskSplit.summary) ? taskSplit.summary : '任务分发中心';
+                const rootTitle = (taskSplit && taskSplit.summary) ? taskSplit.summary : tr('app.story.dispatchCenter', 'Dispatch Center');
                 const grouped = new Map();
                 executeEvents.forEach((evt) => {
-                    const key = `${evt.agent_name || evt.agent_code || '协作者'}|${evt.agent_role || '成员'}`;
+                    const key = `${evt.agent_code || 'agent'}|${evt.agent_name || ''}|${evt.agent_role || ''}`;
                     if (!grouped.has(key)) grouped.set(key, []);
                     grouped.get(key).push(evt);
                 });
@@ -925,11 +977,15 @@
                 const svg = [];
                 svg.push(`<svg class="workflow-story-svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" preserveAspectRatio="xMinYMin meet" xmlns="http://www.w3.org/2000/svg">`);
 
-                svg.push(`<g class="story-node story-node-main"><rect x="${rootX}" y="${rootY}" width="${rootW}" height="${rootH}" rx="14" ry="14"></rect><text x="${rootX + 12}" y="${rootY + 30}">任务分发</text><text class="node-sub" x="${rootX + 12}" y="${rootY + 52}">${escapeHtml(clipText(rootTitle, 16))}</text></g>`);
+                svg.push(`<g class="story-node story-node-main"><rect x="${rootX}" y="${rootY}" width="${rootW}" height="${rootH}" rx="14" ry="14"></rect><text x="${rootX + 12}" y="${rootY + 30}">${escapeHtml(tr('app.story.taskDispatch', 'Task Dispatch'))}</text><text class="node-sub" x="${rootX + 12}" y="${rootY + 52}">${escapeHtml(clipText(rootTitle, 16))}</text></g>`);
 
                 const agentCenters = [];
                 agentGroups.forEach(([groupKey, evts], idx) => {
-                    const [agentName, agentRole] = groupKey.split('|');
+                    const [agentCode, agentNameRaw, agentRoleRaw] = groupKey.split('|');
+                    const sampleEvt = evts[0] || {};
+                    const agentName = localizedAgentName({ ...sampleEvt, agent_code: agentCode, agent_name: agentNameRaw, agent_role: agentRoleRaw });
+                    const roleKind = roleKindFromMeta(agentRoleRaw, agentCode);
+                    const agentRole = localizedRoleLabel(roleKind, agentRoleRaw || tr('app.method.general', 'General'));
                     const y = topY + idx * rowH;
                     const linkY = y + agentH / 2;
                     agentCenters.push({ x: eventX + eventW, y: y + agentH / 2 });
@@ -942,16 +998,16 @@
                         const ey = y + j * (eventH + 8);
                         const statusCls = evt.status === 'success' ? 'event-success' : (evt.status === 'error' ? 'event-error' : 'event-running');
                         const eventAttr = evt.event_id ? `data-event-id="${escapeHtml(evt.event_id)}"` : '';
-                        const title = evt.summary || evt.stage || '执行事件';
+                        const title = evt.summary || evt.stage || tr('app.stream.execEvent', 'Execution Event');
                         svg.push(`<path class="story-bubble-link" d="M ${agentX + agentW} ${y + agentH / 2} C 590 ${y + agentH / 2}, 600 ${ey + eventH / 2}, ${eventX} ${ey + eventH / 2}"></path>`);
                         svg.push(`<g class="story-node story-node-event ${statusCls}" ${eventAttr}><rect x="${eventX}" y="${ey}" width="${eventW}" height="${eventH}" rx="10" ry="10"></rect><text x="${eventX + 10}" y="${ey + 22}">${escapeHtml(clipText(title, 20))}</text><text class="node-sub" x="${eventX + 10}" y="${ey + 42}">${escapeHtml(clipText(formatTimestamp(evt.timestamp), 20))}</text></g>`);
                     });
                 });
 
                 const closeNodes = [
-                    { evt: qualityEvt, label: '汇总校验' },
-                    { evt: saveEvt, label: '知识沉淀' },
-                    { evt: doneEvt, label: '输出闭环' },
+                    { evt: qualityEvt, label: tr('app.story.quality', 'Quality Check') },
+                    { evt: saveEvt, label: tr('app.story.knowledge', 'Knowledge Save') },
+                    { evt: doneEvt, label: tr('app.story.closeLoop', 'Close Loop') },
                 ].filter((x) => x.evt);
                 if (closeNodes.length) {
                     const baseY = Math.max(rootY + rootH + 34, topY + Math.max(agentGroups.length, 1) * rowH - 30);
@@ -995,21 +1051,21 @@
                 const $stream = $('#compact-event-stream');
                 if (!$stream.length) return;
                 if (!events || !events.length) {
-                    $stream.html('<div class="text-muted">暂无事件。</div>');
+                    $stream.html(`<div class="text-muted">${tr('app.stream.noEvents', 'No events.')}</div>`);
                     return;
                 }
                 const items = buildMergedEventStream(events).slice(-24);
                 const html = items.map((evt) => {
                     const status = evt.status || 'running';
                     const statusText = (status === 'success' || status === 'completed')
-                        ? '完成'
-                        : (status === 'cancelled' ? '已取消' : (status === 'error' ? '异常' : '进行中'));
-                    const avatar = roleAvatarMeta(evt.agent_role || evt.agent_code || '成员');
+                        ? tr('app.status.done', 'Done')
+                        : (status === 'cancelled' ? tr('app.status.cancelled', 'Cancelled') : (status === 'error' ? tr('app.status.error', 'Error') : tr('app.status.running', 'Running')));
+                    const avatar = roleAvatarMeta(evt.agent_role || '', evt.agent_code || '');
                     const detailHtml = renderEventDetail(evt.detail || {});
                     const reason = (status === 'error' || status === 'cancelled')
                         ? (evt?.detail?.reason || evt?.detail?.message || evt?.detail?.error || '')
                         : '';
-                    const reasonLabel = status === 'cancelled' ? '取消原因' : '异常原因';
+                    const reasonLabel = status === 'cancelled' ? tr('app.status.cancelReason', 'Cancel reason') : tr('app.status.errorReason', 'Error reason');
                     const reasonClass = status === 'cancelled' ? ' cancelled' : '';
                     const reasonHtml = reason
                         ? `<div class="event-chat-status-reason${reasonClass}">${reasonLabel}：${escapeHtml(String(reason))}</div>`
@@ -1019,8 +1075,8 @@
                             <div class="d-flex align-items-center">
                                 <span class="agent-avatar ${avatar.cls}" style="width:28px;height:28px;font-size:11px;">${escapeHtml(avatar.code)}</span>
                                 <div class="ms-2">
-                                    <div><strong>${escapeHtml(evt.agent_name || evt.agent_code || '协作者')}</strong></div>
-                                    <div class="event-chat-role">${escapeHtml(evt.agent_role || '成员')}</div>
+                                    <div><strong>${escapeHtml(localizedAgentName(evt))}</strong></div>
+                                    <div class="event-chat-role">${escapeHtml(localizedRoleLabel(roleKindFromMeta(evt.agent_role || '', evt.agent_code || ''), evt.agent_role || tr('app.method.general', 'General')))}</div>
                                 </div>
                             </div>
                             <div class="text-end">
@@ -1030,7 +1086,7 @@
                         </div>
                         <div class="event-chat-content">${escapeHtml(evt.summary || evt.stage || '')}</div>
                         ${reasonHtml}
-                        <div class="text-primary mt-1" style="font-size:11px;cursor:pointer;" data-detail-toggle="1">展开详情</div>
+                        <div class="text-primary mt-1" style="font-size:11px;cursor:pointer;" data-detail-toggle="1">${tr('app.stream.expandDetail', 'Expand detail')}</div>
                         <div class="event-chat-detail">${detailHtml}</div>
                     </div>`;
                 }).join('');
@@ -1089,7 +1145,7 @@
                 const $chat = $('#chat .chat-area');
                 $chat.empty();
                 if (!messages || !messages.length) {
-                    $chat.html('<div class="text-center text-muted" id="chat-empty-hint">还没有对话记录。输入问题后点击“发送”开始。</div>');
+                    $chat.html(`<div class="text-center text-muted" id="chat-empty-hint">${tr('app.empty.chat', 'No messages yet. Type and send to start.')}</div>`);
                     return;
                 }
                 messages.forEach(msg => {
@@ -1119,29 +1175,29 @@
                 const events = currentWorkflowEvents || [];
                 const rawLogs = currentLogs || [];
                 if (!events.length && !rawLogs.length) {
-                    $area.append('<div class="text-center text-muted">暂无日志。发送任务后这里会显示处理过程。</div>');
+                    $area.append(`<div class="text-center text-muted">${tr('app.empty.logs', 'No logs yet. Send a task to view process.')}</div>`);
                     return;
                 }
-                $area.append('<div class="compact-event-stream"><div class="text-muted mb-2" style="font-size:12px;">协作对话流</div><div id="compact-event-stream"></div></div>');
+                $area.append(`<div class="compact-event-stream"><div class="text-muted mb-2" style="font-size:12px;">${tr('app.stream.title', 'Collaboration Stream')}</div><div id="compact-event-stream"></div></div>`);
                 $area.append(`<div class="workflow-story-wrap ${isStoryCollapsed ? 'story-collapsed' : ''}">
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <div class="text-muted" style="font-size:12px;">Story Graph</div>
+                        <div class="text-muted" style="font-size:12px;">${tr('app.story.wrapTitle', 'Story Graph')}</div>
                         <div class="d-flex align-items-center gap-2">
-                            <button id="story-collapse-toggle" class="btn btn-outline-secondary btn-sm" type="button">${isStoryCollapsed ? '展开图谱' : '收起图谱'}</button>
-                            <button id="story-view-mode-toggle" class="btn btn-outline-secondary btn-sm" type="button">${storyViewMode === 'detailed' ? '图谱: 详细' : '图谱: 简洁'}</button>
+                            <button id="story-collapse-toggle" class="btn btn-outline-secondary btn-sm" type="button">${isStoryCollapsed ? tr('app.story.expandGraph', 'Expand Graph') : tr('app.story.collapseGraph', 'Collapse Graph')}</button>
+                            <button id="story-view-mode-toggle" class="btn btn-outline-secondary btn-sm" type="button">${storyViewMode === 'detailed' ? tr('app.story.modeDetailed', 'Graph: Detailed') : tr('app.story.modeCompact', 'Graph: Compact')}</button>
                             <label class="text-muted" style="font-size:12px;cursor:pointer;">
                                 <input id="story-auto-focus-toggle" type="checkbox" ${autoFocusLatestNode ? 'checked' : ''} style="margin-right:4px;">
-                                自动聚焦最新节点
+                                ${tr('app.story.autoFocus', 'Auto-focus latest node')}
                             </label>
                             <label class="text-muted" style="font-size:12px;cursor:pointer;">
                                 <input id="story-milestone-toggle" type="checkbox" ${showStoryMilestonesOnly ? 'checked' : ''} style="margin-right:4px;">
-                                仅看关键节点
+                                ${tr('app.story.milestones', 'Milestones only')}
                             </label>
                             <label class="text-muted" style="font-size:12px;cursor:pointer;">
                                 <input id="story-detail-toggle" type="checkbox" ${showStoryExecutionDetails ? 'checked' : ''} style="margin-right:4px;">
-                                展开执行细节
+                                ${tr('app.story.details', 'Execution details')}
                             </label>
-                            <button id="story-fullscreen-toggle" class="btn btn-outline-secondary btn-sm" type="button">${isStoryFullscreen ? '退出全屏' : '全屏查看'}</button>
+                            <button id="story-fullscreen-toggle" class="btn btn-outline-secondary btn-sm" type="button">${isStoryFullscreen ? tr('app.story.exitFullscreen', 'Exit Fullscreen') : tr('app.story.fullscreen', 'Fullscreen')}</button>
                         </div>
                     </div>
                     <div id="workflow-story-container"></div>
@@ -1260,7 +1316,7 @@
                 const $list = $('#conversation-list');
                 $list.empty();
                 if (!list || !list.length) {
-                    $list.html('<div class="text-center text-muted p-3" id="chat-sessions-empty-hint">暂无会话记录</div>');
+                    $list.html(`<div class="text-center text-muted p-3" id="chat-sessions-empty-hint">${tr('app.empty.sessions', 'No sessions yet')}</div>`);
                     return;
                 }
                 list.forEach(item => {
@@ -1268,10 +1324,10 @@
                     $list.append(`
                         <div class="session-item mb-2 p-2 rounded ${activeClass}" data-id="${escapeHtml(item.conversation_id)}" style="cursor:pointer;">
                             <div class="d-flex justify-content-between align-items-center">
-                                <span class="font-weight-bold">${escapeHtml(item.title || '新会话')}</span>
+                                <span class="font-weight-bold">${escapeHtml(item.title || tr('app.session.newDefault', 'New Session'))}</span>
                                 <div class="d-flex align-items-center gap-2">
                                     <span class="text-xs text-muted">${escapeHtml(formatTimestamp(item.updated_at))}</span>
-                                    <button class="btn btn-outline-secondary btn-sm archive-conversation-btn" data-id="${escapeHtml(item.conversation_id)}" type="button">归档</button>
+                                    <button class="btn btn-outline-secondary btn-sm archive-conversation-btn" data-id="${escapeHtml(item.conversation_id)}" type="button">${tr('app.session.archive', 'Archive')}</button>
                                 </div>
                             </div>
                             <div class="text-sm text-muted">${escapeHtml(item.last_message || '')}</div>
@@ -1288,7 +1344,7 @@
                         const list = resp.conversations || [];
                         renderConversationList(list);
                         if (!list.length && !currentConversationId) {
-                            createConversation('新会话');
+                            createConversation(tr('app.session.newDefault', 'New Session'));
                             return;
                         }
                         if (!currentConversationId && list.length) {
@@ -1305,7 +1361,7 @@
                     success: function(resp) {
                         const conv = resp.conversation || {};
                         currentConversationId = conv.conversation_id || null;
-                        $('#chat-panel-title').text('对话框');
+                        $('#chat-panel-title').text(tr('app.panel.chat', 'Chat'));
                         renderConversationMessages(conv.messages || []);
                         const messages = conv.messages || [];
                         const lastMeta = messages.length ? (messages[messages.length - 1].meta || {}) : {};
@@ -1316,7 +1372,7 @@
                 });
             }
 
-            function createConversation(title = '新会话') {
+            function createConversation(title = tr('app.session.newDefault', 'New Session')) {
                 $.ajax({
                     url: '/api/conversations',
                     type: 'POST',
@@ -1339,12 +1395,12 @@
                 const $list = $('#methodology-list');
                 $list.empty();
                 if (!list.length) {
-                    $list.append('<div class="p-3 text-center text-muted">暂无经验</div>');
+                    $list.append(`<div class="p-3 text-center text-muted">${tr('app.method.none', 'No methods yet.')}</div>`);
                     return;
                 }
                 list.forEach(function(m) {
-                    const title = m.title || m.scene || '未命名';
-                    const category = m.category || '通用';
+                    const title = m.title || m.scene || tr('app.method.unnamed', 'Untitled');
+                    const category = m.category || tr('app.method.general', 'General');
                     const successCount = m.success_count ?? 0;
                     const methodId = m.method_id || '';
                     const checked = selectedMethodologyIds.has(methodId) ? 'checked' : '';
@@ -1354,8 +1410,8 @@
                                 <div class="font-weight-medium pr-2">${escapeHtml(title)}</div>
                                 <input class="form-check-input method-select-checkbox" type="checkbox" data-id="${escapeHtml(methodId)}" ${checked}>
                             </div>
-                            <div class="text-xs text-muted mt-1">分类: ${escapeHtml(category)}</div>
-                            <div class="text-xs text-muted mt-1">成功次数: ${escapeHtml(String(successCount))}</div>
+                            <div class="text-xs text-muted mt-1">${tr('app.method.category', 'Category')}: ${escapeHtml(category)}</div>
+                            <div class="text-xs text-muted mt-1">${tr('app.method.successCount', 'Success Count')}: ${escapeHtml(String(successCount))}</div>
                         </div>
                     `);
                 });
@@ -1363,9 +1419,9 @@
 
             function renderMethodologyDetail(method) {
                 const methodId = method.method_id || '';
-                const title = method.title || method.scene || '未命名';
-                const category = method.category || '通用';
-                const scene = method.scene || method.scenario || '未命名';
+                const title = method.title || method.scene || tr('app.method.unnamed', 'Untitled');
+                const category = method.category || tr('app.method.general', 'General');
+                const scene = method.scene || method.scenario || tr('app.method.unnamed', 'Untitled');
                 const keywords = method.keywords || [];
                 const solveSteps = method.solve_steps || [];
                 const applicableRange = method.applicable_range || '';
@@ -1373,35 +1429,44 @@
                 const keywordText = Array.isArray(keywords) ? keywords.join('、') : String(keywords || '');
                 const stepsHtml = Array.isArray(solveSteps) && solveSteps.length
                     ? `<ol>${solveSteps.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ol>`
-                    : `<p class="text-muted">暂无解决步骤</p>`;
+                    : `<p class="text-muted">${tr('app.method.noSteps', 'No solve steps')}</p>`;
+                const catLabel = (v) => {
+                    if (v === '数据分析/报表') return tr('app.method.cat.dataReports', 'Data Analysis / Reports');
+                    if (v === '开发工程/代码实现') return tr('app.method.cat.engineering', 'Engineering / Code');
+                    if (v === '产品设计/需求') return tr('app.method.cat.product', 'Product / Requirements');
+                    if (v === '运营增长/市场') return tr('app.method.cat.operations', 'Operations / Growth');
+                    if (v === '文案内容/知识整理') return tr('app.method.cat.content', 'Content / Knowledge');
+                    if (v === '通用/其他') return tr('app.method.cat.general', 'General / Other');
+                    return v;
+                };
 
                 $('#methodology-detail-body').html(`
                     <div class="methodology-detail-content">
                         <div class="d-flex justify-content-between align-items-center mb-3">
                             <div class="text-muted" style="font-size:12px;">ID: ${escapeHtml(methodId)}</div>
                             <div>
-                                <button class="btn btn-outline-secondary btn-sm mr-2" id="refresh-methodologies-btn" type="button">刷新</button>
-                                <button class="btn btn-outline-danger btn-sm" id="delete-methodology-btn" data-method-id="${escapeHtml(methodId)}" type="button">删除</button>
+                                <button class="btn btn-outline-secondary btn-sm mr-2" id="refresh-methodologies-btn" type="button">${tr('app.method.refresh', 'Refresh')}</button>
+                                <button class="btn btn-outline-danger btn-sm" id="delete-methodology-btn" data-method-id="${escapeHtml(methodId)}" type="button">${tr('app.method.delete', 'Delete')}</button>
                             </div>
                         </div>
-                        <p><strong>标题：</strong>${escapeHtml(title)}</p>
+                        <p><strong>${tr('app.method.title', 'Title')}:</strong> ${escapeHtml(title)}</p>
                         <div class="mb-2">
-                            <strong>分类：</strong>
+                            <strong>${tr('app.method.category', 'Category')}:</strong>
                             <select id="method-category-select" class="form-select form-select-sm d-inline-block" style="width: 240px;">
-                                <option value="数据分析/报表" ${category === '数据分析/报表' ? 'selected' : ''}>数据分析/报表</option>
-                                <option value="开发工程/代码实现" ${category === '开发工程/代码实现' ? 'selected' : ''}>开发工程/代码实现</option>
-                                <option value="产品设计/需求" ${category === '产品设计/需求' ? 'selected' : ''}>产品设计/需求</option>
-                                <option value="运营增长/市场" ${category === '运营增长/市场' ? 'selected' : ''}>运营增长/市场</option>
-                                <option value="文案内容/知识整理" ${category === '文案内容/知识整理' ? 'selected' : ''}>文案内容/知识整理</option>
-                                <option value="通用/其他" ${category === '通用/其他' || category === '通用' ? 'selected' : ''}>通用/其他</option>
+                                <option value="数据分析/报表" ${category === '数据分析/报表' ? 'selected' : ''}>${catLabel('数据分析/报表')}</option>
+                                <option value="开发工程/代码实现" ${category === '开发工程/代码实现' ? 'selected' : ''}>${catLabel('开发工程/代码实现')}</option>
+                                <option value="产品设计/需求" ${category === '产品设计/需求' ? 'selected' : ''}>${catLabel('产品设计/需求')}</option>
+                                <option value="运营增长/市场" ${category === '运营增长/市场' ? 'selected' : ''}>${catLabel('运营增长/市场')}</option>
+                                <option value="文案内容/知识整理" ${category === '文案内容/知识整理' ? 'selected' : ''}>${catLabel('文案内容/知识整理')}</option>
+                                <option value="通用/其他" ${category === '通用/其他' || category === '通用' ? 'selected' : ''}>${catLabel('通用/其他')}</option>
                             </select>
-                            <button class="btn btn-outline-primary btn-sm" id="save-method-category-btn" data-method-id="${escapeHtml(methodId)}" type="button">保存分类</button>
+                            <button class="btn btn-outline-primary btn-sm" id="save-method-category-btn" data-method-id="${escapeHtml(methodId)}" type="button">${tr('app.method.saveCategory', 'Save Category')}</button>
                         </div>
-                        <p><strong>场景：</strong>${escapeHtml(scene)}</p>
-                        <p><strong>关键词：</strong>${escapeHtml(keywordText)}</p>
-                        <p><strong>适用范围：</strong>${escapeHtml(applicableRange || '通用')}</p>
-                        <p><strong>成功次数：</strong>${escapeHtml(String(successCount))}</p>
-                        <div><strong>步骤：</strong>${stepsHtml}</div>
+                        <p><strong>${tr('app.method.scene', 'Scene')}:</strong> ${escapeHtml(scene)}</p>
+                        <p><strong>${tr('app.method.keywords', 'Keywords')}:</strong> ${escapeHtml(keywordText)}</p>
+                        <p><strong>${tr('app.method.range', 'Applicable Range')}:</strong> ${escapeHtml(applicableRange || tr('app.method.general', 'General'))}</p>
+                        <p><strong>${tr('app.method.successCount', 'Success Count')}:</strong> ${escapeHtml(String(successCount))}</p>
+                        <div><strong>${tr('app.method.steps', 'Steps')}:</strong>${stepsHtml}</div>
                     </div>
                 `);
             }
@@ -1416,6 +1481,33 @@
                 });
             }
 
+            function applyMethodFilterOptions() {
+                const $cat = $('#method-category-filter');
+                if ($cat.length) {
+                    const cur = $cat.val();
+                    $cat.html(`
+                        <option value="">${tr('app.method.filter.allCategories', 'All Categories')}</option>
+                        <option value="数据分析">${tr('app.method.filter.dataAnalysis', 'Data Analysis')}</option>
+                        <option value="产品设计">${tr('app.method.filter.productDesign', 'Product Design')}</option>
+                        <option value="项目管理">${tr('app.method.filter.projectManagement', 'Project Management')}</option>
+                        <option value="其他">${tr('app.method.filter.other', 'Other')}</option>
+                    `);
+                    $cat.val(cur || '');
+                }
+                const $tag = $('#method-tag-filter');
+                if ($tag.length) {
+                    const cur = $tag.val();
+                    $tag.html(`
+                        <option value="">${tr('app.method.filter.allTags', 'All Tags')}</option>
+                        <option value="Python">Python</option>
+                        <option value="爬虫">${tr('app.method.filter.crawler', 'Crawler')}</option>
+                        <option value="数据分析">${tr('app.method.filter.dataAnalysis', 'Data Analysis')}</option>
+                        <option value="产品设计">${tr('app.method.filter.productDesign', 'Product Design')}</option>
+                    `);
+                    $tag.val(cur || '');
+                }
+            }
+
             function loadApiKeyStatus() {
                 $.ajax({
                     url: '/api/check_api_key',
@@ -1423,13 +1515,13 @@
                     success: function(apiResponse) {
                         const has = apiResponse.has_api_key;
                         if (has) {
-                            $('#api-key-status').html('<span class="text-success"><i class="fa fa-check-circle mr-1"></i> 已检测到 API 密钥环境变量</span>');
+                            $('#api-key-status').html(`<span class="text-success"><i class="fa fa-check-circle mr-1"></i> ${tr('app.settings.apiReady', 'API key environment variable detected.')}</span>`);
                         } else {
-                            $('#api-key-status').html('<span class="text-warning"><i class="fa fa-exclamation-circle mr-1"></i> 未配置 VOLCANO_API_KEY，将使用模拟模式</span>');
+                            $('#api-key-status').html(`<span class="text-warning"><i class="fa fa-exclamation-circle mr-1"></i> ${tr('app.settings.apiMissing', 'VOLCANO_API_KEY is missing. Simulation mode will be used.')}</span>`);
                         }
                     },
                     error: function() {
-                        $('#api-key-status').html('<span class="text-danger"><i class="fa fa-exclamation-circle mr-1"></i> 无法检测环境变量状态</span>');
+                        $('#api-key-status').html(`<span class="text-danger"><i class="fa fa-exclamation-circle mr-1"></i> ${tr('app.settings.apiError', 'Cannot detect environment variable status.')}</span>`);
                     }
                 });
             }
@@ -1438,7 +1530,7 @@
                 const $chat = $('#chat .chat-area');
                 $chat.find('#chat-empty-hint').remove();
                 $chat.append(`<div class="chat-message user-message"><div class="message-content">${escapeHtml(text)}</div></div>`);
-                $chat.append('<div class="chat-message ai-message" id="temp-ai-message"><div class="message-content">正在处理您的请求...</div></div>');
+                $chat.append(`<div class="chat-message ai-message" id="temp-ai-message"><div class="message-content">${tr('app.request.processing', 'Processing your request...')}</div></div>`);
                 $chat.scrollTop($chat.prop('scrollHeight'));
             }
 
@@ -1482,7 +1574,7 @@
                             loadMethodologies();
                         },
                         error: function() {
-                            $('#temp-ai-message .message-content').html('<span class="text-danger">请求失败，请稍后重试</span>');
+                            $('#temp-ai-message .message-content').html(`<span class="text-danger">${tr('app.request.failed', 'Request failed. Please retry later.')}</span>`);
                         },
                         complete: function() {
                             // 恢复发送按钮，隐藏中止按钮
@@ -1500,16 +1592,16 @@
                         url: '/api/conversations',
                         type: 'POST',
                         contentType: 'application/json',
-                        data: JSON.stringify({ title: '新会话' }),
+                        data: JSON.stringify({ title: tr('app.session.newDefault', 'New Session') }),
                         success: function(resp) {
                             const conv = resp.conversation || {};
                             currentConversationId = conv.conversation_id || currentConversationId;
-                            $('#chat-panel-title').text('对话框');
+                            $('#chat-panel-title').text(tr('app.panel.chat', 'Chat'));
                             startWorkflowStream();
                             processWithConversationId(currentConversationId);
                         },
                         error: function() {
-                            $('#temp-ai-message .message-content').html('<span class="text-danger">会话创建失败，请稍后重试</span>');
+                            $('#temp-ai-message .message-content').html(`<span class="text-danger">${tr('app.conv.createFailed', 'Failed to create conversation. Please retry later.')}</span>`);
                             // 恢复发送按钮，隐藏中止按钮
                             $sendBtn.show();
                             $cancelBtn.hide().prop('disabled', true);
@@ -1523,14 +1615,13 @@
             }
 
             // 初始化
+            applyMethodFilterOptions();
             loadApiKeyStatus();
             loadMethodologies();
             loadConversations();
 
             // 事件绑定
-            $('#chat .btn-primary:contains("新建")').click(function() {
-                createConversation('新会话');
-            });
+            $('#new-conversation-btn').click(function() { createConversation(tr('app.session.newDefault', 'New Session')); });
             $('#chat-clear-btn').click(function() {
                 if (!currentConversationId) return;
                 renderConversationMessages([]);
@@ -1585,7 +1676,7 @@
                     data: JSON.stringify({ conversation_id: currentConversationId, request_id: currentRequestId }),
                     success: function(resp) {
                         if (resp.success) {
-                            $('#execution-log-area').append('<div class="execution-log text-warning">已发送中止指令，等待任务停止...</div>');
+                            $('#execution-log-area').append(`<div class="execution-log text-warning">${tr('app.request.cancelSent', 'Cancel request sent. Waiting for task to stop...')}</div>`);
                         }
                     }
                 });
@@ -1614,7 +1705,7 @@
                     success: function(resp) {
                         if (resp.success) {
                             if (id === currentConversationId) {
-                                createConversation('新会话');
+                                createConversation(tr('app.session.newDefault', 'New Session'));
                             }
                             loadConversations();
                         }
@@ -1657,7 +1748,7 @@
                 const $item = $(this).closest('.event-chat-item');
                 const expanded = $item.hasClass('expanded');
                 $item.toggleClass('expanded', !expanded);
-                $(this).text(expanded ? '展开详情' : '收起详情');
+                $(this).text(expanded ? tr('app.stream.expandDetail', 'Expand detail') : tr('app.stream.collapseDetail', 'Collapse detail'));
             });
             $('#execution-log-area').on('change', '#story-auto-focus-toggle', function() {
                 autoFocusLatestNode = $(this).is(':checked');
@@ -1674,12 +1765,12 @@
                 isStoryCollapsed = !isStoryCollapsed;
                 const $wrap = $('#execution-log-area .workflow-story-wrap');
                 $wrap.toggleClass('story-collapsed', isStoryCollapsed);
-                $(this).text(isStoryCollapsed ? '展开图谱' : '收起图谱');
+                $(this).text(isStoryCollapsed ? tr('app.story.expandGraph', 'Expand Graph') : tr('app.story.collapseGraph', 'Collapse Graph'));
                 renderStoryGraph(currentWorkflowEvents);
             });
             $('#execution-log-area').on('click', '#story-view-mode-toggle', function() {
                 storyViewMode = storyViewMode === 'compact' ? 'detailed' : 'compact';
-                $(this).text(storyViewMode === 'detailed' ? '图谱: 详细' : '图谱: 简洁');
+                $(this).text(storyViewMode === 'detailed' ? tr('app.story.modeDetailed', 'Graph: Detailed') : tr('app.story.modeCompact', 'Graph: Compact'));
                 renderStoryGraph(currentWorkflowEvents);
             });
             $('#execution-log-area').on('click', '#story-fullscreen-toggle', function() {
@@ -1689,11 +1780,11 @@
                 if (isStoryFullscreen && isStoryCollapsed) {
                     isStoryCollapsed = false;
                     $wrap.removeClass('story-collapsed');
-                    $('#story-collapse-toggle').text('收起图谱');
+                    $('#story-collapse-toggle').text(tr('app.story.collapseGraph', 'Collapse Graph'));
                     renderStoryGraph(currentWorkflowEvents);
                 }
                 $wrap.toggleClass('story-fullscreen', isStoryFullscreen);
-                $(this).text(isStoryFullscreen ? '退出全屏' : '全屏查看');
+                $(this).text(isStoryFullscreen ? tr('app.story.exitFullscreen', 'Exit Fullscreen') : tr('app.story.fullscreen', 'Fullscreen'));
             });
             $('#execution-log-area').on('mousedown', '.workflow-story-wrap', function(e) {
                 if (e.which !== 1) return;
@@ -1772,7 +1863,7 @@
             $('#methodology-detail-body').on('click', '#delete-methodology-btn', function() {
                 const id = $(this).attr('data-method-id');
                 if (!id) return;
-                if (!confirm('确定删除该经验吗？')) return;
+                if (!confirm(tr('app.method.deleteConfirmOne', 'Delete this method?'))) return;
                 $.ajax({
                     url: '/api/delete_methodology',
                     type: 'POST',
@@ -1781,7 +1872,7 @@
                     success: function(resp) {
                         if (resp.success) {
                             loadMethodologies();
-                            $('#methodology-detail-body').html('<div class="text-center text-muted">已删除经验</div>');
+                            $('#methodology-detail-body').html(`<div class="text-center text-muted">${tr('app.method.deleted', 'Method deleted.')}</div>`);
                         }
                     }
                 });
@@ -1789,10 +1880,10 @@
             $('#delete-selected-methodologies-btn').click(function() {
                 const ids = Array.from(selectedMethodologyIds);
                 if (!ids.length) {
-                    alert('请先勾选要删除的经验');
+                    alert(tr('app.method.selectFirst', 'Please select methods first.'));
                     return;
                 }
-                if (!confirm(`确定批量删除 ${ids.length} 条经验吗？`)) return;
+                if (!confirm(tf('app.method.deleteConfirmBatch', { count: ids.length }, `Delete selected methods: ${ids.length} items?`))) return;
                 $.ajax({
                     url: '/api/delete_methodologies_batch',
                     type: 'POST',
@@ -1802,13 +1893,13 @@
                         if (resp.success) {
                             selectedMethodologyIds.clear();
                             loadMethodologies();
-                            $('#methodology-detail-body').html('<div class="text-center text-muted">已批量删除选中经验</div>');
+                            $('#methodology-detail-body').html(`<div class="text-center text-muted">${tr('app.method.deletedBatch', 'Selected methods deleted.')}</div>`);
                         } else {
-                            alert('批量删除未生效，请重试');
+                            alert(tr('app.method.deleteBatchFail', 'Batch delete failed. Please retry.'));
                         }
                     },
                     error: function() {
-                        alert('批量删除失败，请稍后重试');
+                        alert(tr('app.method.deleteBatchFail', 'Batch delete failed. Please retry.'));
                     }
                 });
             });
@@ -1828,19 +1919,29 @@
                                 renderMethodologyDetail(resp.methodology);
                             }
                         } else {
-                            alert('分类保存失败，请重试');
+                            alert(tr('app.method.categorySaveFail', 'Failed to save category. Please retry.'));
                         }
                     },
                     error: function() {
-                        alert('分类保存失败，请重试');
+                        alert(tr('app.method.categorySaveFail', 'Failed to save category. Please retry.'));
                     }
                 });
             });
 
             $('#refresh-api-key-status-btn').click(function() {
                 const $st = $('#api-key-status');
-                $st.html('<span class="text-muted"><i class="fa fa-refresh fa-spin mr-1"></i> 正在检测…</span>');
+                $st.html(`<span class="text-muted"><i class="fa fa-refresh fa-spin mr-1"></i> ${tr('app.settings.apiDetecting', 'Detecting...')}</span>`);
                 loadApiKeyStatus();
+            });
+
+            window.addEventListener('aria:localeChanged', function() {
+                window.ariaI18n.apply();
+                applyMethodFilterOptions();
+                applyPanelLayout();
+                renderWorkflowAndLogs(currentLogs || [], currentWorkflowEvents || []);
+                loadApiKeyStatus();
+                loadConversations();
+                loadMethodologies();
             });
 
             window.addEventListener('beforeunload', function() {

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="app.launcher.title">Launch ARIA</title>
+    <style>
+        body { font-family: Arial, sans-serif; display:flex; flex-direction:column; justify-content:center; align-items:center; height:100vh; margin:0; background-color:#f0f0f0; }
+        .container { text-align:center; padding:40px; background:#fff; border-radius:10px; box-shadow:0 2px 10px rgba(0,0,0,0.1); min-width: 420px; }
+        h1 { color:#1a73e8; margin-bottom:20px; }
+        p { color:#666; margin-bottom:24px; }
+        button { background-color:#1a73e8; color:#fff; border:none; padding:10px 20px; border-radius:5px; font-size:16px; cursor:pointer; }
+        button:hover { background-color:#1557b0; }
+        .status { margin-top:20px; padding:10px; border-radius:5px; background-color:#f8f9fa; font-size:14px; }
+        .topbar { display:flex; justify-content:flex-end; margin-bottom:10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="topbar"><div data-lang-switcher></div></div>
+        <h1 data-i18n="app.launcher.heading">ARIA Assistant</h1>
+        <p data-i18n="app.launcher.desc">Double-click this page, then click the button to open ARIA.</p>
+        <button onclick="openApp()" data-i18n="app.launcher.button">Open ARIA</button>
+        <div class="status" id="status" data-i18n="app.launcher.ready">Ready</div>
+    </div>
+
+    <script src="./static/js/i18n.js"></script>
+    <script>
+        async function waitAndOpenApp() {
+            const status = document.getElementById('status');
+            const base = 'http://127.0.0.1:5000';
+            status.textContent = window.ariaI18n.t('app.launcher.opening', 'Opening ARIA...');
+            await new Promise(r => setTimeout(r, 800));
+            window.location.href = `${base}/app`;
+        }
+
+        async function openApp() {
+            const status = document.getElementById('status');
+            status.textContent = window.ariaI18n.t('app.launcher.redirecting', 'Redirecting to http://127.0.0.1:5000/app ...');
+            await waitAndOpenApp();
+        }
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            await window.ariaI18n.init();
+        });
+    </script>
+</body>
+</html>
