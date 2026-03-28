@@ -43,6 +43,14 @@ MODEL_NAME=doubao-seed-2-0-lite-260215
 # OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 ```
 
+### Pushing to Git (privacy)
+
+- **Never commit `.env`** — it is listed in `.gitignore`; only `.env.example` belongs in the repo.
+- **Local data** under `data/artifacts/`, `data/conversations/conversations.json`, `data/midterm_memory.json`, and **`data/methodology/methodologies.json`** / **`category_feedback.json`** are ignored so screenshots, chats, and your experience library stay off GitHub.
+- If those JSON files were **already tracked** in an older commit, run once:  
+  `git rm --cached data/methodology/methodologies.json data/methodology/category_feedback.json`  
+  then commit (files stay on your disk). History may still contain old blobs; use [git filter-repo](https://github.com/newren/git-filter-repo) if you need to purge secrets from past commits.
+
 密钥也可通过系统环境变量提供。全链路单模型：设置 `MODEL_NAME`（或 `config.py` 的 `DEFAULT_MODEL`）。
 
 Security note:
