@@ -1,6 +1,6 @@
-# ARIA - Intelligent Automation Assistant
+# ARIA - Autonomous Recursive Intelligent Agent
 
-ARIA is an LLM-powered intelligent automation assistant that understands natural language instructions and automatically executes various tasks, including desktop operations, browser automation, WeChat messaging, file processing, and more.
+ARIA is an LLM-powered Autonomous Recursive Intelligent Agent that understands natural language instructions and automatically executes various tasks, including desktop operations, browser automation, WeChat messaging, file processing, and more.
 
 ## Core Features
 
