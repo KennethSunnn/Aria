@@ -294,7 +294,9 @@ Issues and Pull Requests are welcome!
 
 For questions or suggestions, please contact via:
 - Submit a GitHub Issue
-- Email the project maintainers
+- Email: hcsun0411@gmail.com
+
+**Author**: Haochen Sun
 
 ---
 
