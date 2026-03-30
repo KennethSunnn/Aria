@@ -4,7 +4,7 @@ import json
 import os
 import re
 import time
-from typing import Optional
+from typing import Literal, Optional, cast
 
 from dotenv import load_dotenv
 
@@ -16,6 +16,18 @@ load_dotenv(override=True)
 # 默认：火山引擎方舟 OpenAI 兼容接口（文本对话使用 chat.completions，与 ARIA 现有 messages 结构一致）
 DEFAULT_OPENAI_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_MODEL_NAME = "doubao-seed-2-0-lite-260215"
+
+ReasoningEffort = Literal["minimal", "low", "medium", "high"]
+_REASONING_EFFORT_SET = frozenset({"minimal", "low", "medium", "high"})
+
+
+def _normalize_reasoning_effort(value: str | None) -> Optional[ReasoningEffort]:
+    if value is None:
+        return None
+    s = str(value).strip().lower()
+    if s in _REASONING_EFFORT_SET:
+        return cast(ReasoningEffort, s)
+    return None
 
 
 def _is_ark_base_url(base_url: str) -> bool:
@@ -50,7 +62,7 @@ class VolcengineLLM:
     OpenAI 官方 Python SDK，对接：
     - 火山方舟：https://www.volcengine.com/docs/82379/1399008 （默认）
     - 阿里云百炼兼容模式（将 OPENAI_BASE_URL 改为 dashscope 兼容地址即可）
-    文本链路使用 chat.completions；多模态 responses API 需另行扩展。
+    使用 chat.completions；user 消息的 content 可为字符串或 OpenAI 多模态片段列表（text + image_url）。
     """
 
     def __init__(self, api_key=None):
@@ -223,7 +235,19 @@ class VolcengineLLM:
             return reasoning.strip()
         return ""
 
-    def generate(self, messages, model_name=None) -> tuple[str, dict[str, int]]:
+    @staticmethod
+    def _messages_have_multimodal_content(messages) -> bool:
+        for m in messages or []:
+            if isinstance((m or {}).get("content"), list):
+                return True
+        return False
+
+    def generate(
+        self,
+        messages,
+        model_name=None,
+        reasoning_effort: str | None = None,
+    ) -> tuple[str, dict[str, int]]:
         """OpenAI 兼容 chat.completions；返回 (文本, 本次调用累计的 token 用量)。"""
         totals: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "llm_calls": 0}
         if not self.api_key or not self._client:
@@ -233,9 +257,23 @@ class VolcengineLLM:
 
         selected_model = (model_name or self.model_name or "").strip() or self.model_name
         last_error = ""
-        use_thinking = self._dashscope_thinking_extra()
-        thinking_fallback_done = False
         thinking_feature_on = self._dashscope_thinking_extra()
+        multimodal = self._messages_have_multimodal_content(messages)
+        eff = _normalize_reasoning_effort(reasoning_effort)
+        is_ark = _is_ark_base_url(self.base_url)
+
+        if is_ark:
+            use_thinking = False
+        elif eff == "minimal":
+            use_thinking = False
+        elif eff in ("low", "medium", "high"):
+            # 百炼：显式档位时仍遵守多模态下关闭 thinking，避免 400
+            use_thinking = thinking_feature_on and not multimodal
+        else:
+            use_thinking = thinking_feature_on and not multimodal
+
+        thinking_fallback_done = False
+        ark_reasoning_fallback_done = False
 
         openai_messages = [
             {"role": m.get("role", "user"), "content": m.get("content", "")} for m in (messages or [])
@@ -244,15 +282,25 @@ class VolcengineLLM:
         for attempt in range(self.max_retries):
             try:
                 print("OpenAI 兼容 Chat Completions:")
-                print(f"  base_url={self.base_url}  model={selected_model}  dashscope_thinking_extra={use_thinking}")
+                ark_eff = eff if is_ark and eff and not ark_reasoning_fallback_done else None
+                re_log = (ark_eff if is_ark else eff) or "—"
+                print(
+                    f"  base_url={self.base_url}  model={selected_model}  "
+                    f"dashscope_thinking_extra={use_thinking}  reasoning_effort={re_log}"
+                )
 
                 create_kwargs: dict = {
                     "model": selected_model,
                     "messages": openai_messages,
                     "timeout": self.timeout_s,
                 }
+                extra_body: dict = {}
+                if is_ark and ark_eff:
+                    extra_body["reasoning_effort"] = ark_eff
                 if use_thinking:
-                    create_kwargs["extra_body"] = {"enable_thinking": True}
+                    extra_body["enable_thinking"] = True
+                if extra_body:
+                    create_kwargs["extra_body"] = extra_body
 
                 completion = self._client.chat.completions.create(**create_kwargs)
                 self._merge_completion_usage_into(completion, totals)
@@ -279,6 +327,15 @@ class VolcengineLLM:
                 summary = self._status_error_summary(e)
                 last_error = summary
                 print(f"API调用失败 ({attempt + 1}/{self.max_retries}): {last_error}")
+                if (
+                    is_ark
+                    and eff
+                    and not ark_reasoning_fallback_done
+                    and e.status_code in (400, 422)
+                ):
+                    print("方舟接口拒绝 reasoning_effort，去掉该字段后重试一次")
+                    ark_reasoning_fallback_done = True
+                    continue
                 if (
                     thinking_feature_on
                     and use_thinking

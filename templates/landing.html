@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title data-i18n="landing.title">ARIA Assistant - Landing</title>
+  <title data-i18n="landing.title">ARIA - Landing</title>
+  <link rel="icon" type="image/png" href="/static/img/aria-avatar.png">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
   <style>
@@ -78,6 +79,20 @@
       color: #0f172a;
       font-size: 13px;
     }
+    .aria-brand-mark{
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      overflow: hidden;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(37, 99, 235, .2);
+    }
+    .aria-brand-mark img{
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
   </style>
 </head>
 <body>
@@ -85,11 +100,11 @@
     <nav class="py-3">
       <div class="d-flex justify-content-between align-items-center">
         <div class="d-flex align-items-center gap-2">
-          <div class="bg-primary text-white rounded-3 d-flex align-items-center justify-content-center" style="width:40px;height:40px;">
-            <i class="fa fa-robot fa-lg"></i>
+          <div class="aria-brand-mark">
+            <img src="/static/img/aria-avatar.png" width="40" height="40" alt="ARIA">
           </div>
           <div>
-            <div class="fw-bold" data-i18n="landing.brand">ARIA Assistant</div>
+            <div class="fw-bold" data-i18n="landing.brand">ARIA</div>
             <div class="muted" style="font-size:13px;">Autonomous Recursive Intelligent Agent</div>
           </div>
         </div>
@@ -177,7 +192,7 @@
 
   <footer class="py-4 border-top">
     <div class="container d-flex justify-content-between align-items-center flex-wrap gap-2">
-      <div class="muted" style="font-size:13px;" data-i18n="landing.footer">© ARIA Assistant - Flask web UI with DashScope coding models.</div>
+      <div class="muted" style="font-size:13px;" data-i18n="landing.footer">ARIA - Flask web UI with DashScope coding models.</div>
       <div class="d-flex gap-2">
         <a class="btn btn-outline-secondary btn-sm" href="/app" data-i18n="common.openApp">Open App</a>
       </div>

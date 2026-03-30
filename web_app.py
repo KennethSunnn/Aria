@@ -6,7 +6,6 @@ import json
 import queue
 import threading
 import uuid
-from datetime import datetime
 from dotenv import load_dotenv
 
 # 加载环境变量（强制覆盖同名系统变量，避免读取到空值）
@@ -16,9 +15,17 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)),
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from aria_manager import ARIAManager, TaskCancelledError
-from llm.volcengine_llm import resolve_inference_api_key
+from llm.volcengine_llm import _normalize_reasoning_effort, resolve_inference_api_key
 from conversation_lib import ConversationLibrary
 from method_lib import MethodologyLibrary
+from chat_attachments import (
+    MAX_FILES_PER_MESSAGE,
+    extract_llm_excerpt,
+    image_data_urls_from_attachment_records,
+    merge_json_attachments,
+    save_uploaded_file,
+)
+from typing import Any
 
 app = Flask(__name__)
 
@@ -232,18 +239,87 @@ def app_ui():
 # 处理用户输入
 @app.route('/api/process_input', methods=['POST'])
 def process_input():
-    data = request.json if request.is_json else None
-    if not isinstance(data, dict):
-        data = {}
-    user_input = data.get('user_input')
-    conversation_id = data.get('conversation_id')
-    request_id = data.get('request_id', '')
+    is_multipart = bool(request.content_type and "multipart/form-data" in request.content_type.lower())
+    attachments_json_payload: Any = None
+    upload_files: list = []
+    if is_multipart:
+        form = request.form
+        user_input = form.get("user_input")
+        conversation_id = (form.get("conversation_id") or "").strip() or None
+        request_id = form.get("request_id") or ""
+        action_screenshots_mp = str(form.get("action_screenshots") or "").lower() in ("1", "true", "yes", "on")
+        new_task_mp = str(form.get("new_task") or "").lower() in ("1", "true", "yes", "on")
+        client_tid_mp = str(form.get("task_id") or "").strip()
+        aj = (form.get("attachments_json") or "").strip()
+        if aj:
+            try:
+                attachments_json_payload = json.loads(aj)
+            except Exception:
+                attachments_json_payload = None
+        upload_files = [f for f in request.files.getlist("files") if f and getattr(f, "filename", None)]
+        payload_early = {
+            "new_task": new_task_mp,
+            "action_screenshots": action_screenshots_mp,
+            "task_id": client_tid_mp,
+            "reasoning_effort": (form.get("reasoning_effort") or "").strip() or None,
+        }
+    else:
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            data = {}
+        payload_early = data
+        user_input = data.get("user_input")
+        conversation_id = (data.get("conversation_id") or "").strip() or None
+        request_id = data.get("request_id", "")
+        attachments_json_payload = data.get("attachments")
+
     if not conversation_id:
         conversation = conversation_manager.create_conversation("新会话")
         conversation_id = conversation.get("conversation_id")
     elif not conversation_manager.get_conversation(conversation_id):
         conversation = conversation_manager.create_conversation("新会话")
         conversation_id = conversation.get("conversation_id")
+
+    attachment_records: list[dict] = []
+    try:
+        for f in upload_files[:MAX_FILES_PER_MESSAGE]:
+            attachment_records.append(save_uploaded_file(manager, str(conversation_id), f))
+        if attachments_json_payload:
+            attachment_records.extend(
+                merge_json_attachments(manager, str(conversation_id), attachments_json_payload)
+            )
+    except ValueError as e:
+        return jsonify({"success": False, "message": str(e)}), 400
+
+    by_path: dict[str, dict] = {}
+    for r in attachment_records:
+        p = str(r.get("path") or "")
+        if p:
+            by_path[p] = r
+    attachment_records = list(by_path.values())
+
+    attachment_excerpt = extract_llm_excerpt(manager, attachment_records) if attachment_records else ""
+    user_plain = (user_input or "").strip()
+    display_user_content = user_plain
+    if attachment_records:
+        names = ", ".join(str(r.get("name") or "") for r in attachment_records)
+        display_user_content = (
+            (display_user_content + "\n\n" if display_user_content else "") + f"[附件 {len(attachment_records)} 个: {names}]"
+        )
+    llm_user_input = user_plain
+    if attachment_excerpt:
+        llm_user_input = (
+            (llm_user_input + "\n\n" if llm_user_input else "")
+            + "【用户上传文件的抽取摘要】\n"
+            + attachment_excerpt
+        ).strip()
+    elif attachment_records:
+        llm_user_input = (
+            (llm_user_input + "\n\n" if llm_user_input else "")
+            + "【用户已上传以下文件（路径相对 ARIA 工作区）】\n"
+            + "\n".join(f"- {r.get('path')}" for r in attachment_records)
+        ).strip()
+
     manager.set_conversation_context(conversation_id)
     manager.current_request_id = request_id or ""
     
@@ -277,7 +353,12 @@ def process_input():
                 "timestamp": time.time() + 1.5
             }
         ]
-        conversation_manager.append_message(conversation_id, "user", user_input or "")
+        conversation_manager.append_message(
+            conversation_id,
+            "user",
+            display_user_content,
+            {"attachments": attachment_records} if attachment_records else None,
+        )
         mock_reply = (
             "未配置 API Key。默认使用火山方舟：在 .env 设置 ARK_API_KEY 与 "
             "OPENAI_BASE_URL=https://ark.cn-beijing.volces.com/api/v3；若用百炼则改 base_url 并设 DASHSCOPE_API_KEY。"
@@ -302,7 +383,7 @@ def process_input():
     
     agents = {}
     try:
-        payload = data if isinstance(data, dict) else {}
+        payload = payload_early if isinstance(payload_early, dict) else {}
         action_screenshots = bool(payload.get("action_screenshots"))
         new_task = bool(payload.get("new_task"))
         client_task_id = str(payload.get("task_id") or "").strip()
@@ -314,7 +395,31 @@ def process_input():
         manager.clear_execution_log()
         manager.clear_workflow_events()
         manager.reset_token_usage()
-        conversation_manager.append_message(conversation_id, "user", user_input or "")
+        manager.set_turn_vision_images(image_data_urls_from_attachment_records(manager, attachment_records))
+        attachment_exts = [str(r.get("ext") or "").lower() for r in attachment_records]
+        client_re = payload.get("reasoning_effort") if isinstance(payload, dict) else None
+        if client_re is not None and not isinstance(client_re, str):
+            client_re = str(client_re).strip() or None
+        elif isinstance(client_re, str):
+            client_re = client_re.strip() or None
+        eff_override = _normalize_reasoning_effort(client_re)
+        if eff_override:
+            manager.set_turn_reasoning_effort(eff_override)
+        else:
+            manager.set_turn_reasoning_effort(
+                manager.resolve_reasoning_effort_for_turn(
+                    llm_user_input or "",
+                    dialogue_context,
+                    has_attachments=bool(attachment_records),
+                    attachment_exts=attachment_exts,
+                )
+            )
+        conversation_manager.append_message(
+            conversation_id,
+            "user",
+            display_user_content,
+            {"attachments": attachment_records} if attachment_records else None,
+        )
 
         if conversation_id in pending_action_plans:
             tid = _tid_for_response_non_parse(conversation_id, client_task_id, new_task, conversation_task_bookmark)
@@ -381,7 +486,7 @@ def process_input():
                     )
                 )
 
-        plan = manager.plan_actions(user_input or "", dialogue_context)
+        plan = manager.plan_actions(llm_user_input or "", dialogue_context)
         if plan.get("mode") == "clarify":
             tid = _tid_for_response_non_parse(conversation_id, client_task_id, new_task, conversation_task_bookmark)
             manager.current_task_id = tid
@@ -462,7 +567,7 @@ def process_input():
                 'token_usage': _tu,
             })
 
-        route = manager.classify_interaction_mode(user_input or "")
+        route = manager.classify_interaction_mode(llm_user_input or "")
         if route.get("mode") == "small_talk":
             st_tid = _tid_for_response_non_parse(conversation_id, client_task_id, new_task, conversation_task_bookmark)
             manager.current_task_id = st_tid
@@ -474,7 +579,7 @@ def process_input():
                 {"reason": route.get("reason", ""), "source": route.get("source", "heuristic")},
             )
             manager.push_log("TaskParser", "识别为问候/闲聊，已跳过复杂流程", "completed")
-            final_result = manager.generate_small_talk_reply(user_input or "")
+            final_result = manager.generate_small_talk_reply(user_plain or "（用户上传了文件）")
             manager.push_event("small_talk_reply", "success", "TextExecAgent", "已生成简洁回复")
             manager.push_log("TextExecAgent", "简洁回复已发送", "completed")
             logs = manager.get_execution_log()
@@ -499,7 +604,7 @@ def process_input():
                 'token_usage': _tu,
             })
 
-        task_info = manager.parse_task(user_input or "", dialogue_context, reuse_for_parse)
+        task_info = manager.parse_task(llm_user_input or "", dialogue_context, reuse_for_parse)
         current_task_id = task_info.get("task_id", "")
         conversation_task_bookmark[conversation_id] = current_task_id
         manager.current_task_id = current_task_id
@@ -507,9 +612,23 @@ def process_input():
         # 匹配方法论
         score, method = manager.match_methodology(task_info)
         
-        # 如果匹配度低于70%，学习新方案（与 README 的相似度阈值一致）
+        # 低于 0.7 通常重新学习；强时效任务若已有可用流程模板（分数 ≥ ARIA_TEMPORAL_METHOD_MATCH_FLOOR）则跳过以省 Token
         if score < 0.7:
-            method = manager.learn_from_external(task_info)
+            if manager.should_reuse_methodology_without_learn(task_info, score, method):
+                manager.push_event(
+                    "method_learn",
+                    "success",
+                    "SolutionLearner",
+                    "强时效任务沿用已匹配流程模板，跳过整段外网学习",
+                    {"score": score, "temporal_risk": task_info.get("temporal_risk")},
+                )
+                manager.push_log(
+                    "SolutionLearner",
+                    f"已跳过 learn_from_external（temporal_risk=high, score={score:.2f}）",
+                    "completed",
+                )
+            else:
+                method = manager.learn_from_external(task_info)
         
         # 拆分子任务
         sub_tasks = manager.split_sub_tasks(task_info, method)
@@ -608,6 +727,8 @@ def process_input():
         manager.set_conversation_context("")
         manager.current_task_id = ""
         manager.current_request_id = ""
+        manager.clear_turn_vision_images()
+        manager.clear_turn_reasoning_effort()
         manager.clear_cancel(request_id)
 
 
@@ -688,15 +809,6 @@ def abort_execution():
     if not session_id:
         return jsonify({'success': False, 'message': '缺少 session_id'}), 400
     return jsonify(manager.abort_execution_session(session_id))
-
-
-@app.route('/api/execution/takeover', methods=['POST'])
-def takeover_execution():
-    data = request.json or {}
-    session_id = (data.get('session_id') or '').strip()
-    if not session_id:
-        return jsonify({'success': False, 'message': '缺少 session_id'}), 400
-    return jsonify(manager.takeover_execution_session(session_id))
 
 
 @app.route('/api/execution/status')
@@ -797,13 +909,16 @@ def create_conversation():
     conversation = conversation_manager.create_conversation(title)
     return jsonify({'conversation': conversation})
 
-# 会话列表（archived可选）
+# 会话列表：默认与 ?archived=false 仅返回未归档；?archived=true 仅已归档
 @app.route('/api/conversations')
 def list_conversations():
     archived = request.args.get('archived')
-    archived_bool = None
-    if archived in ('true', 'false'):
-        archived_bool = archived == 'true'
+    if archived == 'true':
+        archived_bool = True
+    elif archived == 'false':
+        archived_bool = False
+    else:
+        archived_bool = None
     conversations = conversation_manager.list_conversations(archived_bool)
     return jsonify({'conversations': conversations})
 
@@ -815,12 +930,10 @@ def get_conversation(conversation_id):
         return jsonify({'conversation': None, 'success': False}), 404
     return jsonify({'conversation': conversation, 'success': True})
 
-# 归档会话（用于历史任务视图）
-@app.route('/api/conversations/<conversation_id>/archive', methods=['POST'])
-def archive_conversation(conversation_id):
-    data = request.json or {}
-    archived = bool(data.get('archived', True))
-    success = conversation_manager.set_archived(conversation_id, archived)
+# 删除会话
+@app.route('/api/conversations/<conversation_id>', methods=['DELETE'])
+def delete_conversation(conversation_id):
+    success = conversation_manager.delete_conversation(conversation_id)
     return jsonify({'success': success})
 
 # 搜索方法论

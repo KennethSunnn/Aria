@@ -7,6 +7,7 @@ class ShortTermMemory:
     def __init__(self):
         self.task_id = ""
         self.user_input = ""
+        self.temporal_risk = "low"  # high：强时效事实（天气/股价等），结论不可照抄旧答案
         self.current_step = 0
         self.sub_tasks = []
         self.agent_status = {}  # agent_id: status
@@ -17,6 +18,7 @@ class ShortTermMemory:
         """任务结束后清空短期记忆"""
         self.task_id = ""
         self.user_input = ""
+        self.temporal_risk = "low"
         self.current_step = 0
         self.sub_tasks = []
         self.agent_status = {}

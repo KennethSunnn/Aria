@@ -1,10 +1,10 @@
 from config import MODEL_POOL
 import ipaddress
 import json
+import logging
 import os
 import random
 import re
-import shlex
 import shutil
 import socket
 import subprocess
@@ -19,8 +19,20 @@ from urllib.parse import parse_qs, quote, quote_plus, unquote_plus, urlparse
 
 import requests
 
-from llm.volcengine_llm import VolcengineLLM
+from automation import browser_driver
+from automation import desktop_uia
+from automation import wechat_driver
+from automation import screen_ocr
+from automation.app_profiles import wechat_heuristics
+from automation.app_profiles.action_merge import (
+    normalize_actions_with_merge_rules,
+    wechat_heuristic_enabled,
+)
+from automation.app_profiles.prompt_fragments import load_planner_fragment
+from llm.volcengine_llm import VolcengineLLM, _normalize_reasoning_effort
 from memory.memory_system import ShortTermMemory, MidTermMemory, LongTermMemory
+
+logger = logging.getLogger(__name__)
 
 _OFFICE_MAX_CONTENT_CHARS = 400_000
 _OFFICE_MAX_ROWS = 2000
@@ -29,6 +41,13 @@ _OFFICE_MAX_PPT_BULLETS = 100
 
 # desktop_open_app：Windows 下扫描快捷方式/可执行文件的上限，避免开始菜单过大拖慢执行
 _WIN_APP_SCAN_CAP = 8000
+
+# 聊天窗通常不渲染 LaTeX：先写人话与分步，再视需要补充严谨式子
+_MATH_NOTATION_FOR_CHAT = (
+    "数学与公式：默认在普通聊天里展示。先用中文分步、换行、普通数字与单位把思路和结论写清楚；"
+    "需要时用常见 Unicode（如 ² ³ × ÷）或「a/b」「根号下…」等口语化写法，让读者不看符号约定也能读懂。"
+    "若仍需严谨记法，在直观说明之后单独用一行「参考记法：」写出；避免正文大段只有 $...$、\\boxed、\\mathrm 等 LaTeX 源码（除非用户明确要求交 LaTeX 源码）。"
+)
 
 
 def _windows_desktop_path_bonus(p: Path) -> int:
@@ -247,7 +266,6 @@ class ARIAManager:
         "kb_delete_all",
         "kb_delete_by_keyword",
         "kb_delete_low_quality",
-        "conversation_archive",
         "conversation_new",
         "shell_run",
         "file_write",
@@ -258,12 +276,42 @@ class ARIAManager:
         "browser_type",
         "desktop_open_app",
         "desktop_hotkey",
+        "desktop_type",
+        "desktop_sequence",
         "web_fetch",
         "web_understand",
+        "wechat_send_message",
+        "wechat_open_chat",
+        "wechat_check_login",
+        "screen_ocr",
+        "screen_find_text",
+        "screen_click_text",
     }
-    HIGH_RISK_ACTION_TYPES = {"kb_delete_all", "file_delete", "shell_run", "desktop_hotkey"}
+    HIGH_RISK_ACTION_TYPES = {
+        "kb_delete_all",
+        "file_delete",
+        "shell_run",
+        "desktop_hotkey",
+        "desktop_type",
+        "desktop_sequence",
+    }
     USER_GATE_ACTION_TYPES = frozenset(
-        {"file_write", "file_move", "file_delete", "shell_run", "desktop_open_app", "desktop_hotkey"}
+        {
+            "file_write",
+            "file_move",
+            "file_delete",
+            "shell_run",
+            "desktop_open_app",
+            "desktop_hotkey",
+            "desktop_type",
+            "desktop_sequence",
+            "wechat_send_message",
+            "wechat_open_chat",
+            "wechat_check_login",
+            "screen_ocr",
+            "screen_find_text",
+            "screen_click_text",
+        }
     )
 
     def __init__(self, api_key: Optional[str] = None):
@@ -313,7 +361,6 @@ class ARIAManager:
             "kb_delete_by_keyword": self._exec_kb_delete_by_keyword,
             "kb_delete_low_quality": self._exec_kb_delete_low_quality,
             "conversation_new": self._exec_conversation_new,
-            "conversation_archive": self._exec_conversation_archive,
             "shell_run": self._exec_shell_run,
             "file_write": self._exec_file_write,
             "file_move": self._exec_file_move,
@@ -323,8 +370,16 @@ class ARIAManager:
             "browser_type": self._exec_browser_type,
             "desktop_open_app": self._exec_desktop_open_app,
             "desktop_hotkey": self._exec_desktop_hotkey,
+            "desktop_type": self._exec_desktop_type,
+            "desktop_sequence": self._exec_desktop_sequence,
             "web_fetch": self._exec_web_fetch,
             "web_understand": self._exec_web_understand,
+            "wechat_send_message": self._exec_wechat_send_message,
+            "wechat_open_chat": self._exec_wechat_open_chat,
+            "wechat_check_login": self._exec_wechat_check_login,
+            "screen_ocr": self._exec_screen_ocr,
+            "screen_find_text": self._exec_screen_find_text,
+            "screen_click_text": self._exec_screen_click_text,
         }
         self.execution_sessions: dict[str, dict[str, Any]] = {}
         self.execution_lock = threading.Lock()
@@ -341,6 +396,158 @@ class ARIAManager:
             "reg delete",
         ]
         self._token_usage_tls = threading.local()
+        self._turn_vision_data_urls: list[str] = []
+        self._turn_reasoning_effort: str | None = None
+
+    def _default_reasoning_effort_from_env(self) -> str:
+        raw = (os.getenv("REASONING_EFFORT_DEFAULT") or "medium").strip().lower()
+        return _normalize_reasoning_effort(raw) or "medium"
+
+    def set_turn_reasoning_effort(self, effort: str | None) -> None:
+        n = _normalize_reasoning_effort(effort)
+        self._turn_reasoning_effort = n
+
+    def clear_turn_reasoning_effort(self) -> None:
+        self._turn_reasoning_effort = None
+
+    def _reasoning_effort_heuristic(
+        self,
+        llm_user_input: str,
+        dialogue_context: str,
+        *,
+        has_attachments: bool,
+        attachment_exts: list[str],
+    ) -> str:
+        text = (llm_user_input or "").strip()
+        dc = (dialogue_context or "").strip()
+        compact = re.sub(r"[\s\W_]+", "", text.lower())
+        greeting_keywords = (
+            "你好",
+            "您好",
+            "hello",
+            "hi",
+            "hey",
+            "在吗",
+            "谢谢",
+            "thank",
+            "早上好",
+            "晚上好",
+            "再见",
+            "拜拜",
+        )
+        high_kw = (
+            "深度分析",
+            "逐步推导",
+            "详细论证",
+            "复杂方案",
+            "架构设计",
+            "完整证明",
+            "严谨推导",
+            "逐步推理",
+        )
+        if any(k in text for k in high_kw) or len(text) > 2000:
+            return "high"
+        exts = {(e or "").lower() for e in (attachment_exts or [])}
+        docish = exts & {"png", "jpg", "jpeg", "gif", "webp", "pdf", "docx", "xlsx", "xlsm", "pptx"}
+        if has_attachments or docish:
+            return "medium"
+        if any(k in text for k in ("步骤", "计划", "实现", "编写", "部署", "调试", "多个", "首先", "然后", "拆分", "子任务")):
+            return "medium"
+        if len(text) > 800 or len(dc) > 1500:
+            return "medium"
+        if any(k in text.lower() for k in greeting_keywords) and len(compact) <= 24:
+            return "minimal"
+        if len(text) < 40 and not has_attachments:
+            return "low"
+        if len(text) < 200 and not has_attachments:
+            return "low"
+        return self._default_reasoning_effort_from_env()
+
+    def _reasoning_effort_llm_router(
+        self,
+        llm_user_input: str,
+        dialogue_context: str,
+        *,
+        has_attachments: bool,
+    ) -> str | None:
+        if self.is_cancelled():
+            return None
+        if not getattr(self.llm, "api_key", None) or not callable(getattr(self.llm, "generate", None)):
+            return None
+        preview = (llm_user_input or "").strip()[:1200]
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是ARIA推理强度路由器。根据用户本轮任务复杂度，从 minimal、low、medium、high 中选一。"
+                    "minimal：寒暄、极短确认、无实质任务；low：单轮简单问答；medium：含附件、多步、实现类；"
+                    "high：明确要求深度推导/复杂方案或输入很长。"
+                    "只输出JSON：{\"reasoning_effort\":\"minimal|low|medium|high\",\"reason\":\"...\"}"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"是否有附件: {bool(has_attachments)}\n"
+                    f"近期对话字符数: {len((dialogue_context or '').strip())}\n\n"
+                    f"本轮输入:\n{preview or '（空）'}"
+                ),
+            },
+        ]
+        try:
+            raw, usage = self.llm.generate(
+                messages,
+                model_name=self.unified_model,
+                reasoning_effort="minimal",
+            )
+            self._accumulate_usage_dict(usage)
+        except Exception:
+            return None
+        data = self._extract_json_object(raw or "")
+        r = _normalize_reasoning_effort(str((data or {}).get("reasoning_effort", "")).strip())
+        return r
+
+    def resolve_reasoning_effort_for_turn(
+        self,
+        llm_user_input: str,
+        dialogue_context: str,
+        *,
+        has_attachments: bool = False,
+        attachment_exts: list[str] | None = None,
+    ) -> str:
+        """指挥官适应性分析：默认规则；ARIA_REASONING_ROUTER=llm 时先尝试一次轻量模型路由。"""
+        router = (os.getenv("ARIA_REASONING_ROUTER") or "").strip().lower()
+        exts = list(attachment_exts or [])
+        if router in ("1", "true", "yes", "on", "llm"):
+            routed = self._reasoning_effort_llm_router(
+                llm_user_input,
+                dialogue_context,
+                has_attachments=has_attachments,
+            )
+            if routed:
+                return routed
+        return self._reasoning_effort_heuristic(
+            llm_user_input,
+            dialogue_context,
+            has_attachments=has_attachments,
+            attachment_exts=exts,
+        )
+
+    def set_turn_vision_images(self, data_urls: list[str] | None) -> None:
+        """本轮 HTTP 请求内：将上传图片以 data URL 形式随下一条 user 多模态消息发送（由 web_app 设置）。"""
+        self._turn_vision_data_urls = [u.strip() for u in (data_urls or []) if isinstance(u, str) and u.strip()]
+
+    def clear_turn_vision_images(self) -> None:
+        self._turn_vision_data_urls = []
+
+    def _user_content_with_optional_vision(self, text: str) -> str | list[dict[str, Any]]:
+        urls = self._turn_vision_data_urls
+        if not urls:
+            return text
+        parts: list[dict[str, Any]] = [{"type": "text", "text": text}]
+        for u in urls:
+            parts.append({"type": "image_url", "image_url": {"url": u}})
+        return parts
 
     def reset_token_usage(self) -> None:
         """按线程清空用量计数（每个 HTTP 请求 / 异步执行线程各自一份）。"""
@@ -507,11 +714,85 @@ class ARIAManager:
                 return method
         return None
 
-    def _call_llm(self, messages: list[dict[str, str]], fallback_text: str = "", agent_code: str = "") -> str:
-        """调用 LLM（全链路统一模型）；失败时返回 fallback_text。"""
+    def _infer_temporal_risk(self, user_input: str) -> str:
+        """启发式：强时效事实类任务标 high，其余 low。"""
+        text = (user_input or "").strip()
+        if not text:
+            return "low"
+        t = text.lower()
+        cn = (
+            "天气",
+            "气温",
+            "降雨",
+            "下雪",
+            "台风",
+            "空气质量",
+            "雾霾",
+            "股价",
+            "涨跌",
+            "汇率",
+            "比分",
+            "赛程",
+            "积分榜",
+            "金价",
+            "油价",
+            "期货",
+            "今日天气",
+            "现在天气",
+            "实时",
+            "最新股价",
+            "赛果",
+            "限行",
+        )
+        if any(k in text for k in cn):
+            return "high"
+        en = ("weather forecast", "stock price", "live score", "exchange rate")
+        if any(k in t for k in en):
+            return "high"
+        return "low"
+
+    def should_reuse_methodology_without_learn(
+        self,
+        task_info: dict[str, Any],
+        score: float,
+        method: Any,
+    ) -> bool:
+        """
+        强时效任务在相似度未达 0.7 时，若已有可用的流程型方法论（分数 ≥ 可配置下限），跳过 learn_from_external 以省 Token。
+        """
+        if score >= 0.7:
+            return False
+        if not method or not isinstance(method, dict):
+            return False
+        temporal = str(task_info.get("temporal_risk") or "low").strip().lower()
+        if temporal != "high":
+            return False
+        try:
+            floor = float(os.getenv("ARIA_TEMPORAL_METHOD_MATCH_FLOOR", "0.45"))
+        except ValueError:
+            floor = 0.45
+        if score < floor:
+            return False
+        steps = method.get("solve_steps") or method.get("steps") or []
+        if isinstance(steps, str):
+            steps = [s.strip() for s in re.split(r"[\n;；]+", steps) if s.strip()]
+        return len(steps) >= 1
+
+    def _call_llm(
+        self,
+        messages: list[dict[str, Any]],
+        fallback_text: str = "",
+        agent_code: str = "",
+        reasoning_effort: str | None = None,
+    ) -> str:
+        """调用 LLM（全链路统一模型）；失败时返回 fallback_text。reasoning_effort 为 None 时用本轮 set_turn_reasoning_effort 或环境默认。"""
         if self.is_cancelled():
             return fallback_text
         model = self.unified_model
+        resolved_eff = reasoning_effort
+        if resolved_eff is None:
+            resolved_eff = self._turn_reasoning_effort
+        eff_arg = _normalize_reasoning_effort(resolved_eff) or self._default_reasoning_effort_from_env()
         errors: list[str] = []
         max_try = 3
         try:
@@ -519,19 +800,20 @@ class ARIAManager:
                 return fallback_text
             for attempt in range(max_try):
                 try:
-                    text, usage = self.llm.generate(messages, model_name=model)
+                    text, usage = self.llm.generate(messages, model_name=model, reasoning_effort=eff_arg)
                     self._accumulate_usage_dict(usage)
                     self.last_model_trace = {
                         "agent_code": agent_code or "",
                         "model": model,
                         "timestamp": time.time(),
+                        "reasoning_effort": eff_arg,
                     }
                     self.push_event(
                         "llm_route",
                         "success",
                         agent_code or "TaskParser",
                         f"模型: {model}",
-                        {"agent_code": agent_code or "", "model": model},
+                        {"agent_code": agent_code or "", "model": model, "reasoning_effort": eff_arg},
                     )
                     return text
                 except Exception as inner:
@@ -657,7 +939,7 @@ class ARIAManager:
         title = method.get("title") or method.get("name") or (scene[:24] if scene else "新方法论")
         event_key = f"{str(scene).strip().lower()}|{'/'.join(sorted({k.lower() for k in keywords})[:4])}"
 
-        return {
+        out: dict[str, Any] = {
             "method_id": str(uuid.uuid4()),
             "title": title,
             "category": category,
@@ -672,6 +954,10 @@ class ARIAManager:
             "usage_count": 0,
             "create_time": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
+        ot = str(method.get("outcome_type") or "").strip().lower()
+        if ot in ("stable", "time_bound", "pure_procedure"):
+            out["outcome_type"] = ot
+        return out
 
     def _should_save_methodology(
         self,
@@ -702,6 +988,8 @@ class ARIAManager:
                     "请只输出JSON：{\"should_save\":true/false,\"reason\":\"...\"}。"
                     "规则：寒暄/问候/纯礼貌/无明确任务目标 -> false；"
                     "有清晰任务目标、可复用步骤或可迁移经验 -> true。"
+                    "若 temporal_risk 为 high（天气/股价等强时效），且用户仅要一次性当下事实、方法论又无「如何查权威源/参数槽位」等可迁移流程，应 should_save:false，避免把过期答案写进知识库。"
+                    "若 high 但 solve_steps 明确写了可重复的获取与校验流程（非具体数值），可 should_save:true。"
                 ),
             },
             {
@@ -710,6 +998,7 @@ class ARIAManager:
                     f"user_input: {user_input}\n"
                     f"task_type: {task_info.get('task_type', '')}\n"
                     f"intent: {task_info.get('intent', '')}\n"
+                    f"temporal_risk: {task_info.get('temporal_risk', 'low')}\n"
                     f"method_scene: {method_scene}\n"
                     f"method_keywords: {method_keywords}\n"
                     f"method_step_count: {step_count}\n"
@@ -734,9 +1023,10 @@ class ARIAManager:
 
     def classify_interaction_mode(self, user_input: str) -> dict[str, Any]:
         text = (user_input or "").strip()
-        if not text:
+        if not text and not self._turn_vision_data_urls:
             return {"mode": "small_talk", "reason": "empty_input", "source": "heuristic", "confidence": 1.0}
 
+        user_line = f"用户输入：{text}" if text else "用户输入：（本消息主要为图片附件，无额外文字；请根据画面判断是闲聊问候类还是任务类。）"
         messages = [
             {
                 "role": "system",
@@ -746,9 +1036,11 @@ class ARIAManager:
                     "仅输出JSON：{\"mode\":\"small_talk|task\",\"reason\":\"...\",\"confidence\":0-1}。"
                 ),
             },
-            {"role": "user", "content": f"用户输入：{text}"},
+            {"role": "user", "content": self._user_content_with_optional_vision(user_line)},
         ]
-        llm_text = self._call_llm(messages, fallback_text="", agent_code="TaskParser")
+        llm_text = self._call_llm(
+            messages, fallback_text="", agent_code="TaskParser", reasoning_effort="minimal"
+        )
         data = self._extract_json_object(llm_text)
         if data:
             mode = str(data.get("mode", "")).strip().lower()
@@ -818,6 +1110,7 @@ class ARIAManager:
                     "reason": str(action.get("reason") or "").strip(),
                 }
             )
+        normalized_actions = self._normalize_redundant_actions(normalized_actions)
         return {
             "mode": mode,
             "summary": str(plan.get("summary") or "").strip(),
@@ -1031,6 +1324,10 @@ class ARIAManager:
                 pass
         return str(uuid.uuid4())
 
+    def _normalize_redundant_actions(self, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """按 automation/app_profiles/merge_rules.yaml 合并相邻重复链（如 open + send）。"""
+        return normalize_actions_with_merge_rules(actions, self._normalize_action_type_alias)
+
     def plan_actions(self, user_input: str, dialogue_context: str = "") -> dict[str, Any]:
         text = (user_input or "").strip()
         if not text:
@@ -1045,6 +1342,13 @@ class ARIAManager:
                 "requires_double_confirmation": False,
             }
 
+        if wechat_heuristic_enabled():
+            wechat_heuristic = wechat_heuristics.heuristic_plan_wechat(
+                text, self.requires_double_confirmation
+            )
+            if wechat_heuristic:
+                return wechat_heuristic
+
         messages = [
             {
                 "role": "system",
@@ -1055,14 +1359,25 @@ class ARIAManager:
                     "{\"mode\":\"small_talk|qa|action|clarify\","
                     "\"summary\":\"...\","
                     "\"actions\":[{\"type\":\"...\",\"target\":\"...\",\"filters\":{},\"params\":{},\"risk\":\"low|medium|high\",\"reason\":\"...\"}]}"
-                    "可用动作类型示例：kb_delete_all,kb_delete_by_keyword,kb_delete_low_quality,conversation_archive,conversation_new,shell_run,file_write,file_move,file_delete,browser_open,browser_click,browser_type,desktop_open_app,desktop_hotkey,web_fetch,web_understand。"
-                    "desktop_open_app：params.app 或顶层 target 填应用名/路径；Windows 下会扫描本机桌面（含 OneDrive 桌面）、开始菜单与微信/WPS 等常见安装路径，再启动；仍失败时让用户提供 .exe 完整路径。"
+                    "可用动作类型示例：kb_delete_all,kb_delete_by_keyword,kb_delete_low_quality,conversation_new,shell_run,file_write,file_move,file_delete,browser_open,browser_click,browser_type,desktop_open_app,desktop_hotkey,desktop_type,desktop_sequence,wechat_send_message,wechat_open_chat,wechat_check_login,screen_ocr,screen_find_text,screen_click_text,web_fetch,web_understand。"
+                    "能力边界（须严格遵守，勿向用户承诺未启用的能力）："
+                    + browser_driver.capability_summary_for_planner()
+                    + desktop_uia.capability_summary_for_planner()
+                    + wechat_driver.get_capability_summary()
+                    + screen_ocr.get_capability_summary()
+                    + "desktop_open_app：params.app 或顶层 target 填应用名/路径；Windows 下会扫描本机桌面（含 OneDrive 桌面）、开始菜单与微信/WPS 等常见安装路径，再启动；仍失败时让用户提供 .exe 完整路径。"
                     "本地文档/表格：能确定相对工作区的路径与内容时优先 file_write（params.path、params.content、mode overwrite|append）；格式/路径/是否覆盖不明时用 mode=clarify 追问，勿直接拒绝。"
                     "Office 二进制（服务端生成，用户确认执行后可下载）：path 以 .docx 结尾时 params.content 为正文、可选 params.title；.xlsx 时优先 params.rows 为二维数组[[\"列1\",\"列2\"],[\"a\",\"b\"]]，否则用 content 多行、制表符或逗号分列；.pptx 时 params.title 与 params.bullets 字符串数组或 content 多行（首行可作标题）。路径建议 data/artifacts/文件名。"
                     "禁止因「没有 Word/Office」就声明无法完成：须列举替代（记事本、Markdown、WPS、LibreOffice、VS Code、工作区 file_write 写 .md/.txt/.csv 等）。"
-                    "Web 对话不能发送文件附件；真实落盘仅能通过 action 的 file_write（用户确认后写入 ARIA 工作区，可下载）。禁止在 qa 文本里虚构「已保存到 Windows 文档/.docx 已生成」等未执行动作的结果。"
+                    "用户可能已通过 Web 上传文件：【本轮输入】中「抽取摘要」含 txt/md/pdf/docx/xlsx/pptx 等正文摘录及 data/artifacts/uploads/… 相对路径；图片除摘要外，在同轮多模态请求中会以 image 形式一并传入（请直接根据画面回答/规划）。可据此做总结、改写、或 file_write 写入新文件；勿声称「已保存到用户本机文档」除非实际执行了 file_write。禁止虚构未执行动作的结果。"
                     "缺软件或不会配置时：可输出 web_understand（检索安装/配置步骤，params.question 写清系统与软件名）或 clarify 让用户选已装软件；不要只给失败理由。"
-                    "browser_open：仅在本机默认浏览器打开 URL；web_fetch：服务端抓取并抽取正文（params.url）；web_understand：抓取后由 params.question 指定要让模型回答的问题，并生成理解与摘要（需 API Key）。"
+                    "browser_open：若 ARIA_PLAYWRIGHT=1 且已安装 Playwright 与 Chromium，则用受控浏览器导航；否则用系统默认浏览器打开 URL。"
+                    "browser_click/browser_type：Playwright 启用且包已安装时，params.selector 为 CSS 选择器，可选 params.url 先打开页面再操作；未启用时为模拟，不得声称已点击或已输入。"
+                    "desktop_hotkey/desktop_type/desktop_sequence：仅当 ARIA_DESKTOP_UIA=1 且 Windows 上已安装 pywinauto 时为真实注入，否则为模拟。"
+                    + load_planner_fragment("planner_desktop_apps_fragment.txt")
+                    + "用户明确要求发微信/企业微信消息时：必须输出 mode=action 且包含 wechat_send_message（可前置 wechat_check_login），禁止用 mode=clarify 以「违规」「无法执行」等理由拒绝；若环境可能缺依赖，仍输出该动作并在 reason 中提示安装 pywinauto 或 playwright，由执行阶段返回具体错误。"
+                    "screen_ocr/screen_find_text/screen_click_text：屏幕 OCR 识别与操作；screen_ocr 截取屏幕并识别文字（params.region 可选，params.lang 默认 chi_sim+eng）；screen_find_text 查找指定文字位置（params.text 必填）；screen_click_text 点击找到的文字（用 pyautogui 模拟鼠标）。须安装 Tesseract OCR（Windows: https://github.com/UB-Mannheim/tesseract/wiki），未安装时执行会返回安装提示。"
+                    "web_fetch：服务端抓取并抽取正文（params.url）；web_understand：抓取后由 params.question 指定要让模型回答的问题，并生成理解与摘要（需 API Key）。"
                     "用户要查资料、搜材料、总结要点、对比依据且依赖外部信息时：必须包含 web_understand（params.url 为可访问页面 URL，params.question 填用户任务），不要只输出 browser_open。"
                     "若用户给了具体文章/文档链接并要求摘要，用 web_understand 或 web_fetch；可附加 browser_open 方便本机查看。"
                     "常识、概念解释、无需「今日/最新/实时」联网信息时：用 mode=qa 且 actions 为空数组，不要生成打开浏览器的动作。"
@@ -1072,10 +1387,12 @@ class ARIAManager:
             },
             {
                 "role": "user",
-                "content": (
-                    f"【本会话近期对话】\n{(dialogue_context or '').strip()}\n\n【本轮输入】\n{text}"
-                    if (dialogue_context or "").strip()
-                    else text
+                "content": self._user_content_with_optional_vision(
+                    (
+                        f"【本会话近期对话】\n{(dialogue_context or '').strip()}\n\n【本轮输入】\n{text}"
+                        if (dialogue_context or "").strip()
+                        else text
+                    )
                 ),
             },
         ]
@@ -1160,7 +1477,11 @@ class ARIAManager:
             "热点新闻", "今日新闻", "最新新闻", "搜材料", "找材料", "检索",
             "search the web", "search online", "google it", "look up online",
         )
-        if any(h in text for h in web_search_hints) or any(h in lowered for h in ("search for", "look up on the web")):
+        if wechat_heuristics.wechat_send_or_open_intent(text):
+            pass
+        elif any(h in text for h in web_search_hints) or any(
+            h in lowered for h in ("search for", "look up on the web")
+        ):
             fetch_url = self._default_search_url_for_fetch(text)
             open_url = self._default_search_url(text)
             q = text[:2000] if len(text) > 2000 else text
@@ -1197,8 +1518,8 @@ class ARIAManager:
     def format_clarify_plan_for_user(self, plan: dict[str, Any]) -> str:
         s = str(plan.get("summary") or "").strip()
         tail = (
-            "\n\n说明：当前为网页对话，无法像聊天软件那样直接发送文件附件。"
-            "若要在本机得到可下载文件，请通过「确认执行」后的 file_write 写入 ARIA 工作区，"
+            "\n\n说明：可在聊天输入框旁用回形针上传文件（保存到工作区 data/artifacts/uploads/…）；"
+            "若要在本机得到可下载生成文件，请通过「确认执行」后的 file_write 写入 ARIA 工作区，"
             "执行完成后回复里会给出 /api/workspace_file?path=… 下载链接。"
         )
         if not s:
@@ -1221,7 +1542,16 @@ class ARIAManager:
         return "\n".join(lines)
 
     def requires_double_confirmation(self, actions: list[dict[str, Any]]) -> bool:
-        return any((a.get("risk") or "medium") == "high" for a in (actions or []))
+        # 高风险动作或包含桌面自动化操作（desktop_type/desktop_hotkey）时强制双确认
+        for a in (actions or []):
+            if not isinstance(a, dict):
+                continue
+            if (a.get("risk") or "medium") == "high":
+                return True
+            action_type = str(a.get("type") or "")
+            if action_type in ("desktop_type", "desktop_hotkey", "desktop_sequence", "send_social_message"):
+                return True
+        return False
 
     def actions_require_user_gate(self, actions: list[dict[str, Any]]) -> bool:
         """本地写文件、删文件、终端、打开桌面应用等须用户确认后才执行，不参与自动执行。"""
@@ -1299,7 +1629,8 @@ class ARIAManager:
         conversation_manager: Any,
     ) -> dict[str, Any]:
         report = []
-        bounded_actions = (actions or [])[: self.max_action_steps]
+        merged = self._normalize_redundant_actions(list(actions or []))
+        bounded_actions = merged[: self.max_action_steps]
         for idx, action in enumerate(bounded_actions, start=1):
             raw_type = str(action.get("type") or "")
             action_type = self._normalize_action_type_alias(raw_type)
@@ -1573,16 +1904,6 @@ class ARIAManager:
             sess["updated_at"] = time.time()
             return {"success": True, "status": "aborted"}
 
-    def takeover_execution_session(self, session_id: str) -> dict[str, Any]:
-        with self.execution_lock:
-            sess = self.execution_sessions.get(session_id)
-            if not sess:
-                return {"success": False, "message": "session_not_found"}
-            sess["manual_takeover"] = True
-            sess["status"] = "manual_takeover"
-            sess["updated_at"] = time.time()
-            return {"success": True, "status": "manual_takeover"}
-
     def get_execution_session(self, session_id: str) -> dict[str, Any]:
         with self.execution_lock:
             sess = self.execution_sessions.get(session_id)
@@ -1629,11 +1950,6 @@ class ARIAManager:
         title = str((action.get("params") or {}).get("title") or "新会话")
         conv = conversation_manager.create_conversation(title)
         return {"success": True, "conversation_id": conv.get("conversation_id")}
-
-    def _exec_conversation_archive(self, action: dict[str, Any], conversation_id: str, methodology_manager: Any, conversation_manager: Any) -> dict[str, Any]:
-        conv_id = str((action.get("params") or {}).get("conversation_id") or conversation_id or "").strip()
-        ok = conversation_manager.set_archived(conv_id, True) if conv_id else False
-        return {"success": bool(ok), "conversation_id": conv_id}
 
     def _exec_shell_run(self, action: dict[str, Any], conversation_id: str, methodology_manager: Any, conversation_manager: Any) -> dict[str, Any]:
         params = action.get("params") or {}
@@ -2037,6 +2353,7 @@ class ARIAManager:
                 "content": (
                     "你是网页阅读助手。只根据「网页摘录」作答，不要编造页面上没有的信息。"
                     "若摘录不完整或无法回答，如实说明。用中文、条理清晰、尽量简洁。"
+                    + _MATH_NOTATION_FOR_CHAT
                 ),
             },
             {
@@ -2069,24 +2386,89 @@ class ARIAManager:
             raise ValueError("missing_url")
         if not url.startswith(("http://", "https://")):
             url = "https://" + url.lstrip("/")
-        webbrowser.open(url)
         shots = self._capture_screenshot("browser_open")
+        if browser_driver.is_playwright_enabled() and browser_driver.playwright_package_installed():
+            ok, err = browser_driver.navigate(url)
+            if ok:
+                return {
+                    "success": True,
+                    "message": f"browser_playwright_opened:{url}",
+                    "artifacts": [],
+                    "screenshots": shots,
+                }
+            return {
+                "success": False,
+                "message": "browser_open_failed",
+                "stderr": err or "playwright_navigate_failed",
+                "artifacts": [],
+                "screenshots": shots,
+            }
+        if browser_driver.is_playwright_enabled() and not browser_driver.playwright_package_installed():
+            webbrowser.open(url)
+            return {
+                "success": True,
+                "message": f"browser_opened:{url} (ARIA_PLAYWRIGHT=1 but playwright package missing; used default browser)",
+                "stderr": "install: pip install playwright && playwright install chromium",
+                "artifacts": [],
+                "screenshots": shots,
+            }
+        webbrowser.open(url)
         return {"success": True, "message": f"browser_opened:{url}", "artifacts": [], "screenshots": shots}
 
     def _exec_browser_click(self, action: dict[str, Any], conversation_id: str, methodology_manager: Any, conversation_manager: Any) -> dict[str, Any]:
         params = action.get("params") or {}
         selector = str(params.get("selector") or "").strip()
-        # Placeholder for real browser automation driver.
+        nav = str(params.get("url") or "").strip() or None
         shots = self._capture_screenshot("browser_click")
+        if browser_driver.is_playwright_enabled() and browser_driver.playwright_package_installed():
+            ok, err = browser_driver.click(selector, navigate_url=nav)
+            if ok:
+                return {
+                    "success": True,
+                    "message": f"browser_click:{selector}",
+                    "artifacts": [],
+                    "screenshots": shots,
+                }
+            return {
+                "success": False,
+                "message": "browser_click_failed",
+                "stderr": err or "unknown",
+                "artifacts": [],
+                "screenshots": shots,
+            }
         return {"success": True, "message": f"browser_click_simulated:{selector}", "artifacts": [], "screenshots": shots}
 
     def _exec_browser_type(self, action: dict[str, Any], conversation_id: str, methodology_manager: Any, conversation_manager: Any) -> dict[str, Any]:
         params = action.get("params") or {}
         selector = str(params.get("selector") or "").strip()
         text = str(params.get("text") or "")
-        # Placeholder for real browser automation driver.
+        nav = str(params.get("url") or "").strip() or None
         shots = self._capture_screenshot("browser_type")
-        return {"success": True, "message": f"browser_type_simulated:{selector}", "stdout": text[:200], "artifacts": [], "screenshots": shots}
+        if browser_driver.is_playwright_enabled() and browser_driver.playwright_package_installed():
+            ok, err = browser_driver.fill(selector, text, navigate_url=nav)
+            if ok:
+                return {
+                    "success": True,
+                    "message": f"browser_type:{selector}",
+                    "stdout": text[:200],
+                    "artifacts": [],
+                    "screenshots": shots,
+                }
+            return {
+                "success": False,
+                "message": "browser_type_failed",
+                "stdout": text[:200],
+                "stderr": err or "unknown",
+                "artifacts": [],
+                "screenshots": shots,
+            }
+        return {
+            "success": True,
+            "message": f"browser_type_simulated:{selector}",
+            "stdout": text[:200],
+            "artifacts": [],
+            "screenshots": shots,
+        }
 
     def _exec_desktop_open_app(self, action: dict[str, Any], conversation_id: str, methodology_manager: Any, conversation_manager: Any) -> dict[str, Any]:
         params = action.get("params") or {}
@@ -2117,12 +2499,544 @@ class ARIAManager:
     def _exec_desktop_hotkey(self, action: dict[str, Any], conversation_id: str, methodology_manager: Any, conversation_manager: Any) -> dict[str, Any]:
         params = action.get("params") or {}
         hotkey = str(params.get("hotkey") or "").strip()
-        # Placeholder for real desktop automation backend.
         shots = self._capture_screenshot("desktop_hotkey")
+        if (
+            desktop_uia.is_uia_enabled()
+            and os.name == "nt"
+            and desktop_uia.pywinauto_package_installed()
+        ):
+            ok, err = desktop_uia.send_hotkey(hotkey)
+            if ok:
+                return {
+                    "success": True,
+                    "message": f"desktop_hotkey:{hotkey}",
+                    "artifacts": [],
+                    "screenshots": shots,
+                }
+            return {
+                "success": False,
+                "message": "desktop_hotkey_failed",
+                "stderr": err or "unknown",
+                "artifacts": [],
+                "screenshots": shots,
+            }
         return {"success": True, "message": f"desktop_hotkey_simulated:{hotkey}", "artifacts": [], "screenshots": shots}
+
+    def _exec_desktop_type(self, action: dict[str, Any], conversation_id: str, methodology_manager: Any, conversation_manager: Any) -> dict[str, Any]:
+        params = action.get("params") or {}
+        text = str(params.get("text") or params.get("content") or "")
+        shots = self._capture_screenshot("desktop_type")
+        if (
+            desktop_uia.is_uia_enabled()
+            and os.name == "nt"
+            and desktop_uia.pywinauto_package_installed()
+        ):
+            ok, err = desktop_uia.type_text(text)
+            if ok:
+                return {
+                    "success": True,
+                    "message": "desktop_type_sent",
+                    "stdout": text[:400],
+                    "artifacts": [],
+                    "screenshots": shots,
+                }
+            return {
+                "success": False,
+                "message": "desktop_type_failed",
+                "stdout": text[:400],
+                "stderr": err or "unknown",
+                "artifacts": [],
+                "screenshots": shots,
+            }
+        return {
+            "success": True,
+            "message": "desktop_type_simulated",
+            "stdout": text[:400],
+            "artifacts": [],
+            "screenshots": shots,
+        }
+
+    def _exec_desktop_sequence(self, action: dict[str, Any], conversation_id: str, methodology_manager: Any, conversation_manager: Any) -> dict[str, Any]:
+        """顺序执行多步：sleep / hotkey / type，用于任意桌面应用脚本（params.steps）。"""
+        params = action.get("params") or {}
+        steps = params.get("steps")
+        if not isinstance(steps, list) or not steps:
+            return {
+                "success": False,
+                "message": "desktop_sequence_empty",
+                "stderr": "missing_or_empty_steps",
+                "artifacts": [],
+                "screenshots": [],
+            }
+        shots = self._capture_screenshot("desktop_sequence")
+        real = (
+            desktop_uia.is_uia_enabled()
+            and os.name == "nt"
+            and desktop_uia.pywinauto_package_installed()
+        )
+        log_parts: list[str] = []
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            stype = str(step.get("type") or "").strip().lower()
+            if stype == "sleep":
+                time.sleep(float(step.get("seconds", step.get("sec", 0)) or 0))
+                log_parts.append(f"sleep:{step.get('seconds', step.get('sec', 0))}")
+            elif stype in ("hotkey", "desktop_hotkey"):
+                hk = str(step.get("hotkey") or step.get("keys") or "").strip()
+                if not hk:
+                    return {
+                        "success": False,
+                        "message": "desktop_sequence_failed",
+                        "stderr": "empty_hotkey_step",
+                        "artifacts": [],
+                        "screenshots": shots,
+                    }
+                if real:
+                    ok, err = desktop_uia.send_hotkey(hk)
+                    if not ok:
+                        return {
+                            "success": False,
+                            "message": "desktop_sequence_failed",
+                            "stderr": err or "hotkey_failed",
+                            "artifacts": [],
+                            "screenshots": shots,
+                        }
+                log_parts.append(f"hotkey:{hk}")
+            elif stype in ("type", "desktop_type", "text"):
+                txt = str(step.get("text") or step.get("content") or "")
+                if real:
+                    ok, err = desktop_uia.type_text(txt)
+                    if not ok:
+                        return {
+                            "success": False,
+                            "message": "desktop_sequence_failed",
+                            "stderr": err or "type_failed",
+                            "artifacts": [],
+                            "screenshots": shots,
+                        }
+                log_parts.append(f"type:{len(txt)}chars")
+            else:
+                return {
+                    "success": False,
+                    "message": "desktop_sequence_unknown_step",
+                    "stderr": f"unknown_step_type:{stype}",
+                    "artifacts": [],
+                    "screenshots": shots,
+                }
+        out = ";".join(log_parts)
+        if real:
+            return {
+                "success": True,
+                "message": "desktop_sequence_ok",
+                "stdout": out[:800],
+                "artifacts": [],
+                "screenshots": shots,
+            }
+        return {
+            "success": True,
+            "message": f"desktop_sequence_simulated:{out[:400]}",
+            "stdout": out[:800],
+            "artifacts": [],
+            "screenshots": shots,
+        }
+
+    def _exec_wechat_send_message(self, action: dict[str, Any], conversation_id: str, methodology_manager: Any, conversation_manager: Any) -> dict[str, Any]:
+        """
+        执行微信发送消息动作
+        
+        params:
+            contact_name: 联系人名称
+            message: 消息内容
+            use_desktop: 是否优先使用桌面客户端（默认 True）
+            is_enterprise: 是否为企业微信（默认 False）
+        """
+        params = action.get("params") or {}
+        contact_name = str(
+            params.get("contact_name")
+            or params.get("contact")
+            or action.get("target")
+            or ""
+        ).strip()
+        message = str(params.get("message") or params.get("content") or "")
+        use_desktop = params.get("use_desktop", True)
+        is_enterprise = params.get("is_enterprise", False)
+        raw_skip = params.get("skip_contact_search", params.get("skip_search", False))
+        skip_contact_search = raw_skip is True or str(raw_skip).strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        
+        # 检查配置
+        prefer_desktop = os.getenv("ARIA_WECHAT_PREFER_DESKTOP", "1").strip().lower() in ("1", "true", "yes", "on")
+        if not prefer_desktop:
+            use_desktop = False
+        
+        # 关键改进：如果桌面版可用，强制使用桌面版
+        if wechat_driver.is_desktop_available() and os.name == "nt":
+            use_desktop = True
+            logger.info("检测到桌面微信可用，强制使用桌面版")
+        
+        shots: list[str] = []
+        
+        # 检查是否有可用的驱动
+        if not wechat_driver.is_desktop_available() and not wechat_driver.is_web_available():
+            hint = wechat_driver.driver_install_hint()
+            msg = "wechat_driver_not_available:微信自动化驱动不可用。" + (hint or "请安装 pywinauto（Windows）或 playwright。")
+            return {
+                "success": False,
+                "message": msg,
+                "stderr": msg,
+                "stdout": msg,
+                "artifacts": [],
+                "screenshots": shots,
+            }
+        
+        # 检查联系人和消息（已打开会话且仅发消息时可为空名，但建议仍填以便日志）
+        if not contact_name and not skip_contact_search:
+            return {
+                "success": False,
+                "message": "missing_contact_name:请指定联系人名称",
+                "stderr": "missing_contact_name",
+                "artifacts": [],
+                "screenshots": shots,
+            }
+        
+        if not message:
+            return {
+                "success": False,
+                "message": "missing_message:请指定消息内容",
+                "stderr": "missing_message",
+                "artifacts": [],
+                "screenshots": shots,
+            }
+        
+        try:
+            # 创建路由器
+            router = wechat_driver.create_router(prefer_desktop=use_desktop, is_enterprise=is_enterprise)
+            
+            # 发送消息（先执行再截屏，避免截屏抢占焦点导致快捷键落到浏览器）
+            result = router.send_message(
+                contact_name, message, skip_search=skip_contact_search
+            )
+            shots = self._capture_screenshot("wechat_send")
+            
+            if result.get("success"):
+                method = result.get("method", "unknown")
+                fallback_msg = "（回退到网页版）" if result.get("fallback_used") else ""
+                warning = result.get("warning")
+                
+                # 构建响应消息 - 不再说"已发送"，而是"已执行发送操作"
+                response = {
+                    "success": True,
+                    "message": f"wechat_message_executed:{contact_name}{fallback_msg}",
+                    "stdout": f"已执行向 {contact_name} 发送消息的操作（使用{method}）",
+                    "artifacts": [],
+                    "screenshots": shots,
+                }
+                
+                # 添加警告信息（如果有）
+                if warning:
+                    response["warning"] = warning
+                    response["stdout"] += f"\n\n⚠️ 重要提示：\n{warning}\n\n请检查微信窗口确认消息是否真正发送成功。"
+                else:
+                    response["stdout"] += "\n\n请检查微信窗口确认消息已送达。"
+                
+                return response
+            else:
+                error = result.get("error", "unknown")
+                return {
+                    "success": False,
+                    "message": "wechat_send_failed",
+                    "stderr": error,
+                    "artifacts": [],
+                    "screenshots": shots,
+                }
+                
+        except Exception as e:
+            shots = self._capture_screenshot("wechat_send_err")
+            return {
+                "success": False,
+                "message": "wechat_send_error",
+                "stderr": str(e),
+                "artifacts": [],
+                "screenshots": shots,
+            }
+
+    def _exec_wechat_open_chat(self, action: dict[str, Any], conversation_id: str, methodology_manager: Any, conversation_manager: Any) -> dict[str, Any]:
+        """
+        执行打开微信聊天窗口动作
+        
+        params:
+            contact_name: 联系人名称
+            use_desktop: 是否优先使用桌面客户端（默认 True）
+            is_enterprise: 是否为企业微信（默认 False）
+        """
+        params = action.get("params") or {}
+        contact_name = str(
+            params.get("contact_name")
+            or params.get("contact")
+            or action.get("target")
+            or ""
+        ).strip()
+        use_desktop = params.get("use_desktop", True)
+        is_enterprise = params.get("is_enterprise", False)
+        
+        prefer_desktop = os.getenv("ARIA_WECHAT_PREFER_DESKTOP", "1").strip().lower() in ("1", "true", "yes", "on")
+        if not prefer_desktop:
+            use_desktop = False
+        
+        # 关键改进：如果桌面版可用，强制使用桌面版
+        if wechat_driver.is_desktop_available() and os.name == "nt":
+            use_desktop = True
+            logger.info("检测到桌面微信可用，强制使用桌面版")
+        
+        shots: list[str] = []
+        
+        if not contact_name:
+            return {
+                "success": False,
+                "message": "missing_contact_name:请指定联系人名称",
+                "stderr": "missing_contact_name",
+                "artifacts": [],
+                "screenshots": shots,
+            }
+        
+        try:
+            router = wechat_driver.create_router(prefer_desktop=use_desktop, is_enterprise=is_enterprise)
+            result = router.open_chat(contact_name)
+            shots = self._capture_screenshot("wechat_open")
+            
+            if result.get("success"):
+                method = result.get("method", "unknown")
+                return {
+                    "success": True,
+                    "message": f"wechat_chat_opened:{contact_name}",
+                    "stdout": f"已打开与 {contact_name} 的聊天窗口（{method}）",
+                    "artifacts": [],
+                    "screenshots": shots,
+                }
+            else:
+                error = result.get("error", "unknown")
+                return {
+                    "success": False,
+                    "message": "wechat_open_failed",
+                    "stderr": error,
+                    "artifacts": [],
+                    "screenshots": shots,
+                }
+                
+        except Exception as e:
+            shots = self._capture_screenshot("wechat_open_err")
+            return {
+                "success": False,
+                "message": "wechat_open_error",
+                "stderr": str(e),
+                "artifacts": [],
+                "screenshots": shots,
+            }
+
+    def _exec_wechat_check_login(self, action: dict[str, Any], conversation_id: str, methodology_manager: Any, conversation_manager: Any) -> dict[str, Any]:
+        """
+        执行检查微信登录状态动作
+        
+        params:
+            is_enterprise: 是否为企业微信（默认 False）
+        """
+        params = action.get("params") or {}
+        is_enterprise = params.get("is_enterprise", False)
+        
+        shots: list[str] = []
+        
+        try:
+            prefer_desktop = os.getenv("ARIA_WECHAT_PREFER_DESKTOP", "1").strip().lower() in ("1", "true", "yes", "on")
+            router = wechat_driver.create_router(prefer_desktop=prefer_desktop, is_enterprise=is_enterprise)
+            login_status = router.check_login()
+            shots = self._capture_screenshot("wechat_login")
+            
+            desktop_status = login_status.get("desktop_logged_in", False)
+            web_status = login_status.get("web_logged_in", False)
+            
+            if desktop_status or web_status:
+                status_msg = []
+                if desktop_status:
+                    status_msg.append("桌面客户端已登录")
+                if web_status:
+                    status_msg.append("网页版已登录")
+                return {
+                    "success": True,
+                    "message": "wechat_logged_in",
+                    "stdout": "；".join(status_msg),
+                    "artifacts": [],
+                    "screenshots": shots,
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "wechat_not_logged_in",
+                    "stderr": "桌面客户端和网页版均未登录",
+                    "artifacts": [],
+                    "screenshots": shots,
+                }
+                
+        except Exception as e:
+            shots = self._capture_screenshot("wechat_login_err")
+            return {
+                "success": False,
+                "message": "wechat_check_login_error",
+                "stderr": str(e),
+                "artifacts": [],
+                "screenshots": shots,
+            }
+
+    def _exec_screen_ocr(self, action: dict[str, Any], conversation_id: str, methodology_manager: Any, conversation_manager: Any) -> dict[str, Any]:
+        """
+        执行屏幕 OCR 识别
+        
+        params:
+            region: 可选，(left, top, width, height) 或 None（全屏）
+            lang: OCR 语言，默认 'chi_sim+eng'
+        """
+        params = action.get("params") or {}
+        region = params.get("region")
+        lang = params.get("lang", "chi_sim+eng")
+        
+        shots = self._capture_screenshot("screen_ocr")
+        
+        result = screen_ocr.ocr_screen(region, lang)
+        
+        if result.get("success"):
+            text_preview = result.get("text", "")[:500]
+            blocks_count = len(result.get("blocks", []))
+            return {
+                "success": True,
+                "message": f"screen_ocr_completed:识别到{blocks_count}个文字块",
+                "stdout": f"识别结果（前 500 字）：\n{text_preview}",
+                "artifacts": [],
+                "screenshots": shots,
+            }
+        else:
+            error = result.get("error", "unknown")
+            hint = result.get("hint", "")
+            msg = error + (f"。{hint}" if hint else "")
+            return {
+                "success": False,
+                "message": msg,
+                "stderr": msg,
+                "artifacts": [],
+                "screenshots": shots,
+            }
+
+    def _exec_screen_find_text(self, action: dict[str, Any], conversation_id: str, methodology_manager: Any, conversation_manager: Any) -> dict[str, Any]:
+        """
+        执行屏幕文字查找
+        
+        params:
+            text: 要查找的文字（必填）
+            region: 可选，(left, top, width, height) 或 None（全屏）
+            lang: OCR 语言，默认 'chi_sim+eng'
+        """
+        params = action.get("params") or {}
+        search_text = params.get("text", "")
+        region = params.get("region")
+        lang = params.get("lang", "chi_sim+eng")
+        
+        shots = self._capture_screenshot("screen_find_text")
+        
+        if not search_text.strip():
+            return {
+                "success": False,
+                "message": "missing_search_text:请指定要查找的文字",
+                "stderr": "missing_search_text",
+                "artifacts": [],
+                "screenshots": shots,
+            }
+        
+        result = screen_ocr.find_text_on_screen(search_text, region, lang)
+        
+        if result.get("success"):
+            matches = result.get("matches", [])
+            if matches:
+                positions = [f"{m['text']} @ ({m['center'][0]}, {m['center'][1]})" for m in matches[:5]]
+                return {
+                    "success": True,
+                    "message": f"screen_find_text_found:找到{len(matches)}处匹配",
+                    "stdout": f"找到位置：\n" + "\n".join(positions),
+                    "artifacts": [],
+                    "screenshots": shots,
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": f"text_not_found:未在屏幕上找到「{search_text}」",
+                    "stderr": f"text_not_found:{search_text}",
+                    "artifacts": [],
+                    "screenshots": shots,
+                }
+        else:
+            error = result.get("error", "unknown")
+            return {
+                "success": False,
+                "message": error,
+                "stderr": error,
+                "artifacts": [],
+                "screenshots": shots,
+            }
+
+    def _exec_screen_click_text(self, action: dict[str, Any], conversation_id: str, methodology_manager: Any, conversation_manager: Any) -> dict[str, Any]:
+        """
+        执行点击屏幕文字
+        
+        params:
+            text: 要点击的文字（必填）
+            region: 可选，(left, top, width, height) 或 None（全屏）
+            lang: OCR 语言，默认 'chi_sim+eng'
+            button: 鼠标按钮，'left' / 'right' / 'middle'，默认 'left'
+        """
+        params = action.get("params") or {}
+        search_text = params.get("text", "")
+        region = params.get("region")
+        lang = params.get("lang", "chi_sim+eng")
+        button = params.get("button", "left")
+        
+        shots = self._capture_screenshot("screen_click_text")
+        
+        if not search_text.strip():
+            return {
+                "success": False,
+                "message": "missing_search_text:请指定要点击的文字",
+                "stderr": "missing_search_text",
+                "artifacts": [],
+                "screenshots": shots,
+            }
+        
+        result = screen_ocr.click_text(search_text, region, lang, button)
+        
+        if result.get("success"):
+            position = result.get("position")
+            pos_str = f"位置 ({position[0]}, {position[1]})" if position else ""
+            return {
+                "success": True,
+                "message": result.get("message", "screen_click_text_completed"),
+                "stdout": f"已点击「{search_text}」{pos_str}",
+                "artifacts": [],
+                "screenshots": shots,
+            }
+        else:
+            error = result.get("error", "unknown")
+            return {
+                "success": False,
+                "message": error,
+                "stderr": error,
+                "artifacts": [],
+                "screenshots": shots,
+            }
 
     def generate_small_talk_reply(self, user_input: str) -> str:
         text = (user_input or "").strip()
+        user_line = text or ("请根据图片简单打个招呼或说明你能看到的内容。" if self._turn_vision_data_urls else "你好")
         messages = [
             {
                 "role": "system",
@@ -2131,9 +3045,11 @@ class ARIAManager:
                     "要求：1-2句话、总长度不超过50字、不输出JSON、不输出步骤。"
                 ),
             },
-            {"role": "user", "content": text or "你好"},
+            {"role": "user", "content": self._user_content_with_optional_vision(user_line)},
         ]
-        llm_text = self._call_llm(messages, fallback_text="", agent_code="TextExecAgent")
+        llm_text = self._call_llm(
+            messages, fallback_text="", agent_code="TextExecAgent", reasoning_effort="minimal"
+        )
         cleaned = (llm_text or "").strip()
         if cleaned:
             cleaned = cleaned.replace("```", "").strip()
@@ -2160,32 +3076,40 @@ class ARIAManager:
             "task_type": "text",
             "intent": "general",
             "keywords": user_input.split()[:5],
+            "temporal_risk": self._infer_temporal_risk(user_input),
             "timestamp": time.time(),
         }
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "你是ARIA任务解析器。请根据用户输入提取任务类型(task_type)、意图(intent)以及关键词(keywords)。只输出严格JSON，不要多余文本。"
+                    "你是ARIA任务解析器。请根据用户输入提取任务类型(task_type)、意图(intent)、关键词(keywords)以及时效风险(temporal_risk)。只输出严格JSON，不要多余文本。"
                     "keywords为数组，元素为短关键词（3-8个字/词）。"
+                    "temporal_risk 只能为 high 或 low：high 表示结论强依赖当下数据（天气、股价、赛果、实时路况等），旧答案不可照抄；low 表示以稳定知识或流程为主。"
                     "注意：后续多 Agent 链路不会自动在磁盘生成 Word 文件；若用户要可下载文档，通常需要走动作执行(file_write)而非仅靠文本答复。"
                     "若提供了「本会话近期对话」，请结合上下文理解用户本轮补充或修改是否与上文同一任务相关。"
+                    "重要：如果用户输入包含多个独立任务（如「搜索新闻并保存到 Word」包含搜索 + 文件保存两个任务），请在 multi_tasks 字段中列出每个子任务的目标描述。"
+                    "multi_tasks 为数组，每个元素包含：goal(任务目标字符串), task_type(任务类型), keywords(关键词数组)。"
                 ),
             },
             {
                 "role": "user",
-                "content": (
-                    f"【本会话近期对话】\n{(dialogue_context or '').strip()}\n\n用户输入：{user_input}"
-                    if (dialogue_context or "").strip()
-                    else f"用户输入：{user_input}"
+                "content": self._user_content_with_optional_vision(
+                    (
+                        f"【本会话近期对话】\n{(dialogue_context or '').strip()}\n\n用户输入：{user_input}"
+                        if (dialogue_context or "").strip()
+                        else f"用户输入：{user_input}"
+                    )
                 ),
             },
         ]
         llm_text = self._call_llm(messages, fallback_text="", agent_code="TaskParser")
         data = self._extract_json_object(llm_text)
 
-        task_info = fallback_task_info
+        task_info = dict(fallback_task_info)
         if data:
+            raw_tr = str(data.get("temporal_risk", "")).strip().lower()
+            tr = raw_tr if raw_tr in ("high", "low") else self._infer_temporal_risk(user_input)
             task_info.update(
                 {
                     "task_id": fallback_task_info["task_id"],
@@ -2193,13 +3117,18 @@ class ARIAManager:
                     "task_type": str(data.get("task_type") or "text"),
                     "intent": str(data.get("intent") or "general"),
                     "keywords": self._normalize_keywords(data.get("keywords"))[:10],
+                    "temporal_risk": tr,
                     "timestamp": time.time(),
+                    "multi_tasks": data.get("multi_tasks") or [],
                 }
             )
+        else:
+            task_info["temporal_risk"] = self._infer_temporal_risk(user_input)
 
         # 写入短期记忆
         self.stm.task_id = task_info["task_id"]
         self.stm.user_input = user_input
+        self.stm.temporal_risk = str(task_info.get("temporal_risk") or "low")
         
         self.record_model_thought("TaskParser", f"任务解析完成，任务类型: {task_info['task_type']}")
         self.push_event(
@@ -2207,7 +3136,11 @@ class ARIAManager:
             "success",
             "TaskParser",
             "PM 已完成需求解析",
-            {"task_type": task_info.get("task_type"), "intent": task_info.get("intent")},
+            {
+                "task_type": task_info.get("task_type"),
+                "intent": task_info.get("intent"),
+                "temporal_risk": task_info.get("temporal_risk"),
+            },
         )
         self.push_log("TaskParser", "问题分析完成", "completed")
         self.check_cancelled("task_parse_end")
@@ -2273,24 +3206,37 @@ class ARIAManager:
             "solve_steps": ["分析问题", "查找资料", "生成解决方案", "验证结果"],
             "applicable_range": "通用",
         }
+        temporal = str(task_info.get("temporal_risk") or "low").strip().lower()
         messages = [
             {
                 "role": "system",
                 "content": (
                     "你是ARIA方案学习器。请把用户需求抽象成一个可复用的方法论(methodology)。只输出严格JSON，不要多余文本。"
-                    "JSON字段: scene(字符串), keywords(字符串数组), solve_steps(字符串数组), applicable_range(字符串，可选)。"
+                    "JSON字段: scene(字符串), keywords(字符串数组), solve_steps(字符串数组), applicable_range(字符串，可选), outcome_type(字符串，可选: stable|time_bound|pure_procedure)。"
+                    "solve_steps 只写「做什么、用什么渠道/工具、如何校验」，用占位符表示地点/日期/品种等变量；禁止把具体实时数值（如今日气温、当前股价）写进步骤当作可复用事实。"
+                    "若任务强依赖当下数据（天气、赛果、股价等），outcome_type 须为 time_bound，scene 与 keywords 尽量泛化（如「查询某城市天气」而非绑定单一城市名），便于同类问题复用流程。"
+                    "非时效类可省略 outcome_type 或填 stable；纯流程无结论可填 pure_procedure。"
                     "solve_steps 中应体现可替换工具与本地文件落盘思路（如多种编辑器或格式），避免默认绑定单一专有软件。"
                 ),
             },
             {
                 "role": "user",
-                "content": f"用户需求：{task_info.get('user_input','')}\n\n请给出：1) 场景(scene)，2) 关键词(keywords)，3) 解决步骤(solve_steps，4-8条)，4) 适用范围(applicable_range)。",
+                "content": self._user_content_with_optional_vision(
+                    f"任务时效(temporal_risk)：{temporal}（high 表示结论会过期，步骤必须是可重复的获取与校验流程）。\n\n"
+                    f"用户需求：{task_info.get('user_input','')}\n\n"
+                    "请给出：1) scene，2) keywords，3) solve_steps（4-8条），4) applicable_range，5) 必要时 outcome_type。"
+                ),
             },
         ]
         llm_text = self._call_llm(messages, fallback_text="", agent_code="SolutionLearner")
         data = self._extract_json_object(llm_text)
         solution = data if data else fallback_solution
         solution["is_success"] = False
+        ot = str(solution.get("outcome_type") or "").strip().lower()
+        if ot not in ("stable", "time_bound", "pure_procedure"):
+            solution.pop("outcome_type", None)
+        if temporal == "high":
+            solution.setdefault("outcome_type", "time_bound")
         self.push_event(
             "method_learn",
             "success",
@@ -2308,6 +3254,57 @@ class ARIAManager:
         self.check_cancelled("task_split_start")
         self.push_event("task_split", "running", "TaskSplitter", "PM 正在拆分子任务")
         self.push_log("TaskSplitter", "正在拆分任务", "running")
+        
+        # 多任务拆解：如果检测到多个独立任务，为每个任务生成执行步骤
+        multi_tasks = task_info.get("multi_tasks") or []
+        if len(multi_tasks) > 1:
+            all_sub_tasks = []
+            for idx, mt in enumerate(multi_tasks, 1):
+                goal = mt.get("goal", "")
+                mt_type = mt.get("task_type", "text")
+                mt_keywords = mt.get("keywords", [])
+                self.push_log("TaskSplitter", f"任务{idx}/{len(multi_tasks)}: {goal}", "running")
+                # 为每个子任务调用 LLM 生成执行步骤
+                step_messages = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "你是 ARIA 任务拆分器。请根据任务目标生成 2-4 个可执行的子任务步骤。只输出严格 JSON。"
+                            "JSON 格式：{\"sub_tasks\": [{\"step\": \"步骤 1\", \"description\": \"描述\", \"agent_type\": \"TextExecAgent\"}, ...]}"
+                            "agent_type 只能是 TextExecAgent / VisionExecAgent / SpeechExecAgent。"
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": f"任务目标：{goal}\n任务类型：{mt_type}\n关键词：{', '.join(mt_keywords)}",
+                    },
+                ]
+                step_llm = self._call_llm(step_messages, fallback_text="", agent_code="TaskSplitter")
+                step_data = self._extract_json_object(step_llm)
+                steps_list = step_data.get("sub_tasks") if isinstance(step_data.get("sub_tasks"), list) else None
+                if not steps_list:
+                    steps_list = [{"step": f"执行{goal}", "description": goal, "agent_type": "TextExecAgent"}]
+                for step_item in steps_list:
+                    step = str(step_item.get("step") or "")
+                    atype = str(step_item.get("agent_type") or "TextExecAgent")
+                    desc = str(step_item.get("description") or f"执行{step}")
+                    pb = str(step_item.get("persona_brief") or "").strip() or self._default_persona_brief(atype, step, desc)
+                    all_sub_tasks.append({
+                        "sub_task_id": str(uuid.uuid4()),
+                        "task_id": task_info["task_id"],
+                        "task_index": idx,
+                        "step": step,
+                        "description": desc,
+                        "agent_type": atype,
+                        "persona_brief": pb,
+                        "goal": goal,
+                    })
+            self.record_model_thought("TaskSplitter", f"多任务拆解完成，共{len(multi_tasks)}个任务，{len(all_sub_tasks)}个子任务")
+            self.push_event("task_split", "success", "TaskSplitter", f"任务拆分完成，共{len(all_sub_tasks)}个子任务", {"sub_tasks": all_sub_tasks})
+            self.push_log("TaskSplitter", f"任务拆分完成，共{len(all_sub_tasks)}个子任务", "completed")
+            self.check_cancelled("task_split_end")
+            return all_sub_tasks
+        
         # 记录模型思考过程
         self.record_model_thought("TaskSplitter", f"基于方法论拆分子任务，用户输入: {task_info['user_input']}")
         self.record_model_thought("TaskSplitter", f"方法论步骤: {method.get('solve_steps', [])}")
@@ -2343,7 +3340,9 @@ class ARIAManager:
             },
             {
                 "role": "user",
-                "content": f"任务原始输入：{task_info.get('user_input','')}\n\n方法论场景(scene)：{method.get('scene','') or method.get('scenario','')}\n\nsolve_steps：{steps}",
+                "content": self._user_content_with_optional_vision(
+                    f"任务原始输入：{task_info.get('user_input','')}\n\n方法论场景(scene)：{method.get('scene','') or method.get('scenario','')}\n\nsolve_steps：{steps}"
+                ),
             },
         ]
         llm_text = self._call_llm(messages, fallback_text="", agent_code="TaskSplitter")
@@ -2470,13 +3469,23 @@ class ARIAManager:
 
             sys_parts = [
                 f"你是ARIA执行专家[{agent_type}]。你将基于给定步骤产出可直接使用的结果。只输出纯文本，不要JSON。",
+                _MATH_NOTATION_FOR_CHAT,
+            ]
+            if str(getattr(self.stm, "temporal_risk", "low")).lower() == "high":
+                sys_parts.append(
+                    "【时效】本任务结论依赖当下数据：须说明信息时间点或获取渠道，禁止把方法论纲要中的示例数值当作当前事实；"
+                    "无法取得实时数据时要明确说明并给出用户可自行核实的方式。"
+                )
+            sys_parts.extend(
+                [
                 "本链路仅为文本推理：你没有调用 file_write、没有访问用户磁盘。严禁声称「已成功创建/保存 .docx」「已写入 我的文档/此电脑>文档」等；若用户要可下载文件，应明确说明须由用户在动作计划中「确认执行」file_write 到工作区，或自行在本机用 Word 另存。",
-                "Web 聊天窗无法上传附件；不要指导用户「在聊天窗点附件发送」来完成你给它的文件。",
+                "用户可通过网页回形针上传文件；若子任务涉及已上传文件，正文可能在「原始任务输入」的附件摘要中。不要编造用户未提供的文件内容。",
                 "涉及「创建文档/保存文件」时：不要因未安装 Word 就拒绝；应给出可落地方案——例如建议相对路径如 data/artifacts/xxx.md、记事本或 WPS/LibreOffice/VS Code 等替代、以及可复制粘贴的正文草稿。",
                 "若仍缺关键信息（路径、格式、是否覆盖），在答复末尾用简短编号列出 1～3 个需用户确认的问题。",
                 "【总指挥设定的人设与要求】",
                 persona,
-            ]
+                ]
+            )
             user_parts = []
             if (dialogue_context or "").strip():
                 user_parts.append(f"【本会话近期对话（与当前任务同一线程）】\n{(dialogue_context or '').strip()}")
@@ -2493,9 +3502,12 @@ class ARIAManager:
                     "请仅输出本步骤的最终结果正文。",
                 ]
             )
+            user_body = "\n".join(user_parts)
+            # 多模态体积大：仅首个子任务附带原图，后续步骤依赖前文文本链
+            user_content = self._user_content_with_optional_vision(user_body) if not results else user_body
             messages = [
                 {"role": "system", "content": "\n".join(sys_parts)},
-                {"role": "user", "content": "\n".join(user_parts)},
+                {"role": "user", "content": user_content},
             ]
             llm_text = self._call_llm(messages, fallback_text=f"执行完成：{task['description']}", agent_code=agent_type)
 
@@ -2548,17 +3560,23 @@ class ARIAManager:
 
         fallback_final = "\n".join([result["result"] for result in results])
         steps_plain = self._format_exec_results_as_plain_text(results if isinstance(results, list) else [])
+        qc_sys_parts = [
+            "你是ARIA质量校验员。请基于各子步骤产出生成最终结果，并判断整体是否符合要求。只输出严格JSON，不要多余文本。"
+            "JSON字段：final_result(字符串), is_success(布尔)。"
+            "final_result 须汇总可执行建议；若任务与本地文件/软件相关，应包含多种替代路径（如 .md/.txt、常见编辑器），避免单独一句「无法完成」。"
+            "若子步骤声称已生成 .docx 或已保存到「文档」文件夹等，但整个流程未实际执行 file_write 动作，你必须在 final_result 中删除或纠正此类虚假陈述，并说明：真实文件需用户确认 file_write 计划，或自行在本机创建。"
+            "Web 对话不能发附件；不要在 final_result 中让用户「通过聊天窗发送文件」。"
+            "若信息仍不足，在 final_result 中明确写出 1～3 条需用户补充或选择的问题。",
+            _MATH_NOTATION_FOR_CHAT,
+        ]
+        if str(getattr(self.stm, "temporal_risk", "low")).lower() == "high":
+            qc_sys_parts.append(
+                "本任务强时效：final_result 不得把过时或示例数值当作当前事实；应写清数据时间点或引导用户通过权威渠道核实最新信息。"
+            )
         messages = [
             {
                 "role": "system",
-                "content": (
-                    "你是ARIA质量校验员。请基于各子步骤产出生成最终结果，并判断整体是否符合要求。只输出严格JSON，不要多余文本。"
-                    "JSON字段：final_result(字符串), is_success(布尔)。"
-                    "final_result 须汇总可执行建议；若任务与本地文件/软件相关，应包含多种替代路径（如 .md/.txt、常见编辑器），避免单独一句「无法完成」。"
-                    "若子步骤声称已生成 .docx 或已保存到「文档」文件夹等，但整个流程未实际执行 file_write 动作，你必须在 final_result 中删除或纠正此类虚假陈述，并说明：真实文件需用户确认 file_write 计划，或自行在本机创建。"
-                    "Web 对话不能发附件；不要在 final_result 中让用户「通过聊天窗发送文件」。"
-                    "若信息仍不足，在 final_result 中明确写出 1～3 条需用户补充或选择的问题。"
-                ),
+                "content": "\n".join(qc_sys_parts),
             },
             {
                 "role": "user",

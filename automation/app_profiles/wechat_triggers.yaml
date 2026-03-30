@@ -1,0 +1,14 @@
+# 与 wechat_heuristics.py 默认列表合并（追加去重），无需改代码即可微调触发词。
+# 设为 false 的项在代码中无 effect，仅作文档占位时可删除。
+
+product_markers_extra: []
+# 额外「产品名」别名（默认已含 微信、wechat、weixin、企业微信、企微）
+
+send_intent_keywords_extra: []
+# 额外发送意图词（默认已含 发消息、发给、帮我发 等）
+
+guard_send_keywords_extra: []
+# 用于与「仅查登录」分支互斥时的发送类词（默认与 send 意图相近）
+
+login_only_keywords_extra: []
+# 额外「仅查登录」触发词（默认已含 是否登录、登录状态 等）

@@ -234,25 +234,6 @@ class MethodologyLibrary:
             "remaining_count": len(new_methodologies),
         }
 
-    # 更新方法论
-    def update_methodology(self, method_id, scene=None, keywords=None, solve_steps=None):
-        methodologies = self.load_methodologies()
-        for i, method in enumerate(methodologies):
-            if method["method_id"] == method_id:
-                if scene is not None:
-                    method["scene"] = scene
-                    if not method.get("title"):
-                        method["title"] = scene[:24]
-                if keywords is not None:
-                    method["keywords"] = self._normalize_keywords(keywords)
-                if solve_steps is not None:
-                    method["solve_steps"] = self._normalize_steps(solve_steps)
-                method["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                methodologies[i] = self.normalize_methodology(method)
-                self.save_methodologies(methodologies)
-                return methodologies[i]
-        return None
-
     def update_methodology_category(self, method_id: str, category: str):
         methodologies = self.load_methodologies()
         for i, method in enumerate(methodologies):
@@ -271,17 +252,6 @@ class MethodologyLibrary:
                 return normalized
         return None
 
-    # 增加成功计数
-    def increment_success_count(self, method_id):
-        methodologies = self.load_methodologies()
-        for method in methodologies:
-            if method["method_id"] == method_id:
-                method["success_count"] += 1
-                method["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                self.save_methodologies(methodologies)
-                return method
-        return None
-    
     # 根据ID获取方法论
     def get_methodology_by_id(self, method_id):
         methodologies = self.load_methodologies()

@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title data-i18n="app.title">ARIA Assistant</title>
+    <title data-i18n="app.title">ARIA</title>
+    <link rel="icon" type="image/png" href="/static/img/aria-avatar.png">
     <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Font Awesome -->
@@ -22,7 +23,12 @@
             --warning: #d97706;
             --danger: #dc2626;
         }
+        html {
+            height: 100%;
+        }
         body {
+            min-height: 100%;
+            min-height: 100dvh;
             background-color: var(--bg);
             font-family: 'SourceHanSans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             color: var(--text);
@@ -37,6 +43,23 @@
         }
         .tab-content {
             margin-top: 20px;
+        }
+        #main-tab-content {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+        #chat.chat-tab-pane.active {
+            display: flex !important;
+            flex-direction: column;
+            min-height: calc(100vh - 128px);
+            min-height: calc(100svh - 128px);
+        }
+        .chat-tab-inner {
+            display: flex;
+            flex-direction: column;
+            flex: 1 1 0;
+            min-height: 0;
         }
         .card {
             border-radius: 14px;
@@ -61,6 +84,14 @@
         #conversation-list .session-item {
             font-size: 13px;
             line-height: 1.35;
+            white-space: normal;
+            word-wrap: break-word;
+            word-break: break-word;
+        }
+        #conversation-list .session-item .last-message-preview {
+            white-space: pre-wrap;
+            overflow-wrap: break-word;
+            hyphens: auto;
         }
         .user-message {
             text-align: right;
@@ -74,7 +105,8 @@
             border-bottom-right-radius: 6px;
             color: #0b3aa8;
             font-size: 13px;
-            line-height: 1.45;
+            line-height: 1.5;
+            box-shadow: 0 4px 16px rgba(37, 99, 235, 0.12);
         }
         .ai-message .message-content {
             background-color: var(--surface-soft);
@@ -85,10 +117,198 @@
             max-width: 78%;
             border-bottom-left-radius: 6px;
             font-size: 13px;
-            line-height: 1.45;
+            line-height: 1.5;
+            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
         }
-        #chat .input-group .form-control {
+        .chat-card-footer {
+            padding-top: 10px;
+            padding-bottom: 16px;
+            background: transparent !important;
+            border-top: 1px solid var(--border) !important;
+        }
+        .chat-composer {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 10px 12px 12px;
+            background: var(--surface);
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+        .chat-composer.drag-over {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px var(--primary-soft);
+            background: var(--surface);
+        }
+        .chat-pending-files {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 6px;
+            min-height: 0;
+        }
+        .chat-attach-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            max-width: 100%;
+            padding: 5px 6px 5px 10px;
+            border-radius: 999px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--text);
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+        }
+        .chat-attach-chip .fa {
+            color: var(--muted);
+            flex-shrink: 0;
+        }
+        .chat-attach-chip-name {
+            max-width: 168px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .chat-attach-chip-remove {
+            border: none;
+            background: transparent;
+            color: var(--muted);
+            padding: 0 6px;
+            line-height: 1;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        .chat-attach-chip-remove:hover {
+            color: var(--danger);
+            background: rgba(220, 38, 38, 0.08);
+        }
+        .chat-composer-input-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .chat-composer-icon-btn {
+            flex-shrink: 0;
+            width: 40px;
+            min-height: 40px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--muted);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.15s, border-color 0.15s, background 0.15s;
+        }
+        .chat-composer-icon-btn:hover {
+            color: var(--primary);
+            border-color: #bfdbfe;
+            background: var(--primary-soft);
+        }
+        .chat-composer-field-wrap {
+            flex: 1 1 auto;
+            min-width: 0;
+            display: flex;
+            align-items: stretch;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: var(--surface);
+            padding: 6px 12px;
+            box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04);
+        }
+        .chat-composer-field {
+            border: none;
+            outline: none;
+            width: 100%;
+            font-size: 14px;
+            line-height: 1.45;
+            padding: 4px 4px;
+            min-height: 36px;
+            max-height: 140px;
+            resize: none;
+            background: transparent;
+            color: var(--text);
+            font-family: inherit;
+        }
+        .chat-composer-field::placeholder {
+            color: var(--muted);
+        }
+        .chat-welcome {
+            max-width: 420px;
+            margin: 0 auto;
+        }
+        .chat-welcome .welcome-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 8px;
+        }
+        .chat-welcome .welcome-lead {
             font-size: 13px;
+            line-height: 1.6;
+            color: var(--muted);
+            margin-bottom: 12px;
+        }
+        .chat-welcome ul {
+            font-size: 12px;
+            line-height: 1.55;
+            color: var(--muted);
+            padding-left: 1.1rem;
+            margin-bottom: 0;
+        }
+        .chat-welcome li {
+            margin-bottom: 6px;
+        }
+        .chat-welcome-min {
+            font-size: 13px;
+            color: var(--muted);
+            padding: 8px 4px;
+        }
+        .collab-header-stack .collab-subtitle {
+            font-size: 11px;
+            color: var(--muted);
+            font-weight: 500;
+            margin-top: 2px;
+        }
+        .ai-typing-indicator {
+            color: var(--muted);
+            font-size: 13px;
+        }
+        .ai-typing-indicator .dot {
+            display: inline-block;
+            animation: ariaTypingDot 1.1s ease-in-out infinite;
+        }
+        .ai-typing-indicator .dot:nth-child(2) { animation-delay: 0.15s; }
+        .ai-typing-indicator .dot:nth-child(3) { animation-delay: 0.3s; }
+        @keyframes ariaTypingDot {
+            0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+            40% { opacity: 1; transform: translateY(-1px); }
+        }
+        .chat-composer-send {
+            flex-shrink: 0;
+            width: 40px;
+            min-height: 40px;
+            border-radius: 10px;
+            border: none;
+            background: var(--primary);
+            color: #fff;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
+            transition: background 0.15s ease, box-shadow 0.15s ease;
+        }
+        .chat-composer-send:hover {
+            background: #1d4ed8;
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        }
+        .chat-composer-send i {
+            font-size: 18px;
+        }
+        #chat-cancel-btn.chat-composer-cancel {
+            border-radius: 12px;
+            min-width: 44px;
         }
         .execution-log {
             font-size: 12px;
@@ -165,37 +385,114 @@
             font-size: 12px;
             margin-bottom: 4px;
         }
-        .sidebar {
-            height: 52vh;
-            min-height: 420px;
+        #methodology-list.sidebar {
+            max-height: min(70vh, 640px);
+            min-height: 200px;
             overflow-y: auto;
         }
-        .chat-area {
-            height: 52vh;
-            min-height: 360px;
-            overflow-y: auto;
-            background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
-        }
-        .log-area {
-            height: 52vh;
-            min-height: 360px;
-            overflow-y: auto;
-            background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
-        }
-        .chat-panels-row {
-            align-items: stretch;
-        }
-        .chat-panels-row > .panel-col {
+        #panel-card-left .card-body {
             display: flex;
+            flex-direction: column;
+            min-height: 0;
+            flex: 1 1 auto;
         }
-        .chat-panels-row > .panel-col > .panel-card {
-            width: 100%;
-            height: 100%;
+        #panel-card-left .sidebar {
+            flex: 1 1 auto;
+            min-height: 120px;
+            overflow-y: auto;
+        }
+        #panel-card-center {
+            flex: 1 1 auto;
+            min-height: 0;
             display: flex;
             flex-direction: column;
         }
+        #panel-card-center .chat-area {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+        }
+        #panel-card-center .chat-card-footer {
+            flex-shrink: 0;
+        }
+        #panel-card-right {
+            flex: 1 1 auto;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        #panel-card-right .log-area {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            overflow-x: hidden;
+            background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+        }
+        #chat-panels-split.chat-panels-row {
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            flex: 1 1 0;
+            min-height: 0;
+            gap: 0;
+        }
+        @media (min-width: 1200px) {
+            #chat-panels-split.chat-panels-row {
+                flex-direction: row;
+                align-items: stretch;
+            }
+            /* Bootstrap .col-12 为 width:100%，在横向 flex 下会破坏三栏比例与拖条调节 */
+            #chat-panels-split.chat-panels-row > .panel-col-split {
+                width: auto !important;
+                max-width: none !important;
+            }
+        }
+        .column-resize-handle {
+            display: none;
+            flex: 0 0 10px;
+            cursor: col-resize;
+            background: transparent;
+            align-self: stretch;
+            min-height: 80px;
+            touch-action: none;
+            user-select: none;
+            position: relative;
+            z-index: 6;
+            flex-shrink: 0;
+        }
+        .column-resize-handle::before {
+            content: '';
+            position: absolute;
+            left: -6px;
+            right: -6px;
+            top: 0;
+            bottom: 0;
+            cursor: col-resize;
+        }
+        @media (min-width: 1200px) {
+            #chat-panels-split.split-handles-visible .column-resize-handle {
+                display: block;
+            }
+        }
+        .column-resize-handle:hover,
+        .column-resize-handle.dragging {
+            background: rgba(37, 99, 235, 0.18);
+        }
+        .chat-panels-row > .panel-col {
+            display: flex;
+            min-width: 0;
+        }
+        .chat-panels-row > .panel-col > .panel-card {
+            width: 100%;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            flex: 1 1 auto;
+        }
         .chat-panels-row > .panel-col > .panel-card > .card-body {
             flex: 1 1 auto;
+            min-height: 0;
         }
         #main-tabs .nav-link {
             color: var(--muted);
@@ -235,6 +532,37 @@
         }
         .panel-title {
             font-weight: 700;
+            font-size: 12px;
+        }
+        /* 经验中心、系统设置：与对话主界面字号对齐 */
+        #methodology.tab-pane,
+        #settings.tab-pane {
+            font-size: 13px;
+        }
+        #methodology.tab-pane .card-title,
+        #settings.tab-pane .card-title {
+            font-size: 12px;
+            font-weight: 700;
+        }
+        #methodology.tab-pane .form-control,
+        #methodology.tab-pane .form-select,
+        #settings.tab-pane .form-control,
+        #settings.tab-pane .form-select {
+            font-size: 13px;
+        }
+        #methodology.tab-pane .btn:not(.btn-sm),
+        #settings.tab-pane .btn:not(.btn-sm) {
+            font-size: 13px;
+        }
+        #methodology.tab-pane .methodology-detail-content,
+        #methodology.tab-pane .methodology-detail-content p,
+        #methodology.tab-pane .methodology-detail-content li,
+        #methodology.tab-pane .methodology-detail-content ol {
+            font-size: 13px;
+        }
+        #settings.tab-pane h6.font-weight-bold {
+            font-size: 12px;
+            font-weight: 700;
         }
         .panel-controls .btn {
             padding: 2px 8px;
@@ -242,6 +570,8 @@
         }
         .panel-maximized {
             transition: all .2s ease;
+            flex: 1 1 100% !important;
+            max-width: 100% !important;
         }
         .collapsed-panels-bar {
             display: flex;
@@ -453,6 +783,34 @@
             box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
             border-color: rgba(37, 99, 235, 0.3);
         }
+        .aria-brand-mark {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            overflow: hidden;
+            flex-shrink: 0;
+            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
+        }
+        .aria-brand-mark img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+        .chat-welcome-avatar {
+            width: 56px;
+            height: 56px;
+            border-radius: 14px;
+            margin: 0 auto 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 16px rgba(37, 99, 235, 0.18);
+        }
+        .chat-welcome-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -462,8 +820,8 @@
             <div class="row align-items-center">
                 <div class="col-md-6">
                     <div class="d-flex align-items-center">
-                        <div class="bg-primary text-white rounded-2 d-flex align-items-center justify-content-center me-3" style="width: 40px; height: 40px;">
-                            <i class="fa fa-robot fa-lg"></i>
+                        <div class="aria-brand-mark me-3">
+                            <img src="/static/img/aria-avatar.png" width="40" height="40" alt="ARIA">
                         </div>
                         <div>
                             <h1 class="h4 mb-0 font-weight-bold">Aria</h1>
@@ -506,27 +864,127 @@
     <!-- 主内容区 -->
     <div class="container-fluid tab-content" id="main-tab-content">
         <!-- 对话主面板 -->
-        <div class="tab-pane fade show active" id="chat" role="tabpanel" aria-labelledby="chat-tab">
+        <div class="tab-pane fade show active chat-tab-pane" id="chat" role="tabpanel" aria-labelledby="chat-tab">
             <div class="collapsed-panels-bar d-none" id="collapsed-panels-bar"></div>
-            <div class="row chat-panels-row">
+            <div class="chat-tab-inner">
+            <div id="chat-panels-split" class="chat-panels-row">
+                <!-- 对话主区域（xl 下视觉为第一列） -->
+                <div class="col-12 order-2 order-xl-1 panel-col panel-col-split" id="panel-col-center">
+                    <div class="card panel-card" id="panel-card-center">
+                        <div class="card-header">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h5 id="chat-panel-title" class="card-title mb-0 panel-title" data-i18n="app.panel.chat">Chat</h5>
+                                <div class="d-flex align-items-center gap-2 panel-controls">
+                                    <button class="btn btn-outline-secondary btn-sm" id="chat-clear-btn" type="button">
+                                        <i class="fa fa-trash"></i> <span data-i18n="common.clear">Clear</span>
+                                    </button>
+                                    <button class="btn btn-outline-secondary btn-sm panel-collapse-btn" data-panel="center" type="button"
+                                        data-i18n="app.panel.collapsePanel" data-i18n-attr="title" title="Collapse this panel">
+                                        <i class="fa fa-minus"></i>
+                                    </button>
+                                    <button class="btn btn-outline-secondary btn-sm panel-maximize-btn" data-panel="center" type="button"
+                                        data-i18n="app.panel.maximizePanel" data-i18n-attr="title" title="Maximize this panel">
+                                        <i class="fa fa-expand"></i>
+                                    </button>
+                                    <button class="btn btn-outline-secondary btn-sm panel-restore-btn" data-panel="center" type="button"
+                                        data-i18n="app.panel.restoreLayout" data-i18n-attr="title" title="Restore default layout">
+                                        <i class="fa fa-undo"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-body chat-area">
+                            <div class="chat-welcome-min text-center d-none" id="chat-welcome-min">
+                                <span data-i18n="app.chat.welcomeShort">Ready. Type below to start.</span>
+                                <button type="button" class="btn btn-link btn-sm p-0 ms-2 align-baseline" id="chat-welcome-show-btn" data-i18n="app.chat.welcomeShowTips">Show tips</button>
+                            </div>
+                            <div class="chat-welcome text-center" id="chat-empty-hint">
+                                <div class="chat-welcome-avatar" aria-hidden="true"><img src="/static/img/aria-avatar.png" width="56" height="56" alt=""></div>
+                                <div class="welcome-title" data-i18n="app.chat.welcomeTitle">Hi, I'm ARIA</div>
+                                <p class="welcome-lead mb-0" data-i18n="app.chat.welcomeLead">Ask in plain language — I'll plan, execute, and learn from experience.</p>
+                                <ul class="text-start mx-auto mt-3" style="max-width:300px;">
+                                    <li data-i18n="app.chat.welcomeB1">Type below, press Enter to send (Shift+Enter for new line)</li>
+                                    <li data-i18n="app.chat.welcomeB2">Drop files here or use the paperclip to attach</li>
+                                    <li data-i18n="app.chat.welcomeB3">Without an API key you'll still get a simulated reply; check Settings for key status</li>
+                                </ul>
+                                <button type="button" class="btn btn-outline-secondary btn-sm mt-2" id="chat-welcome-dismiss-btn" data-i18n="app.chat.welcomeDismiss">Hide tips</button>
+                            </div>
+                        </div>
+                        <div class="card-footer chat-card-footer">
+                            <div id="chat-composer" class="chat-composer">
+                                <div id="chat-pending-files" class="chat-pending-files mb-2" aria-live="polite"></div>
+                                <div class="chat-composer-input-row">
+                                    <button class="chat-composer-icon-btn" type="button" id="chat-attach-btn"
+                                        data-i18n="app.chat.attachBtnTitle" data-i18n-attr="title" title="Attach files">
+                                        <i class="fa fa-paperclip"></i>
+                                    </button>
+                                    <input type="file" id="chat-file-input" class="d-none" multiple
+                                        accept=".txt,.md,.csv,.json,.pdf,.docx,.xlsx,.xlsm,.pptx,.png,.jpg,.jpeg,.gif,.webp,.html,.htm,.xml,.py,.log">
+                                    <div class="chat-composer-field-wrap">
+                                        <textarea id="chat-text-input" class="chat-composer-field" rows="1"
+                                            data-i18n="app.input.chat" data-i18n-attr="placeholder" placeholder="Type your question..." autocomplete="off"></textarea>
+                                    </div>
+                                    <button class="btn chat-composer-send" type="button" id="chat-send-btn"
+                                        data-i18n="app.chat.sendBtnTitle" data-i18n-attr="title" title="Send message">
+                                        <i class="fa fa-paper-plane"></i>
+                                    </button>
+                                    <button class="btn btn-outline-danger chat-composer-cancel" type="button" id="chat-cancel-btn" disabled style="display: none;">
+                                        <i class="fa fa-stop"></i> <span data-i18n="common.cancel">Cancel</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="column-resize-handle order-xl-2" id="col-resize-handle-0" role="separator" aria-orientation="vertical" aria-hidden="true"></div>
+
+                <!-- 执行日志和多Agent协同侧边栏 -->
+                <div class="col-12 order-3 order-xl-3 panel-col panel-col-split" id="panel-col-right">
+                    <!-- 执行日志 -->
+                    <div class="card panel-card" id="panel-card-right">
+                        <div class="card-header">
+                            <div class="d-flex justify-content-between align-items-start gap-2">
+                                <div class="collab-header-stack flex-grow-1 min-w-0">
+                                    <h5 class="card-title mb-0 panel-title" data-i18n="app.panel.collab">Collaboration Log</h5>
+                                    <div class="collab-subtitle" data-i18n="app.collabUnified">Unified collaboration view</div>
+                                </div>
+                                <div class="d-flex align-items-center gap-1 panel-controls flex-shrink-0">
+                                    <button class="btn btn-outline-secondary btn-sm panel-collapse-btn" data-panel="right" type="button"
+                                        data-i18n="app.panel.hideCollab" data-i18n-attr="title" title="Hide collaboration column">
+                                        <i class="fa fa-minus"></i>
+                                    </button>
+                                    <button class="btn btn-outline-secondary btn-sm panel-maximize-btn" data-panel="right" type="button"
+                                        data-i18n="app.panel.widenCollab" data-i18n-attr="title" title="Widen collaboration log">
+                                        <i class="fa fa-expand"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    <div class="card-body log-area" id="execution-log-area">
+                            <div class="text-center text-muted" id="execution-empty-hint">
+                                <span data-i18n="app.empty.logs">No logs yet. Send a task to view process.</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="column-resize-handle order-xl-4" id="col-resize-handle-1" role="separator" aria-orientation="vertical" aria-hidden="true"></div>
+
                 <!-- 会话列表侧边栏 -->
-                <div class="col-md-3 order-md-3 panel-col" id="panel-col-left">
+                <div class="col-12 order-1 order-xl-5 panel-col panel-col-split" id="panel-col-left">
                     <div class="card panel-card" id="panel-card-left">
                         <div class="card-header">
                             <div class="d-flex justify-content-between align-items-center">
                                 <h5 class="card-title mb-0 panel-title" data-i18n="app.panel.sessions">Sessions</h5>
                                 <div class="d-flex align-items-center gap-2 panel-controls">
-                                    <button class="btn btn-primary btn-sm" id="new-conversation-btn">
+                                    <button class="btn btn-primary btn-sm" id="new-conversation-btn" type="button"
+                                        data-i18n="app.panel.newConversationTitle" data-i18n-attr="title" title="New conversation">
                                         <i class="fa fa-plus"></i> <span data-i18n="common.new">New</span>
                                     </button>
-                                    <button class="btn btn-outline-secondary btn-sm panel-collapse-btn" data-panel="left" title="Collapse">
+                                    <button class="btn btn-outline-secondary btn-sm panel-collapse-btn" data-panel="left" type="button"
+                                        data-i18n="app.panel.hideSessions" data-i18n-attr="title" title="Hide sessions column">
                                         <i class="fa fa-minus"></i>
-                                    </button>
-                                    <button class="btn btn-outline-secondary btn-sm panel-maximize-btn" data-panel="left" title="Maximize">
-                                        <i class="fa fa-expand"></i>
-                                    </button>
-                                    <button class="btn btn-outline-secondary btn-sm panel-restore-btn" data-panel="left" title="Restore">
-                                        <i class="fa fa-undo"></i>
                                     </button>
                                 </div>
                             </div>
@@ -543,85 +1001,7 @@
                         </div>
                     </div>
                 </div>
-                
-                <!-- 对话主区域 -->
-                <div class="col-md-3 order-md-1 panel-col" id="panel-col-center">
-                    <div class="card panel-card" id="panel-card-center">
-                        <div class="card-header">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <h5 id="chat-panel-title" class="card-title mb-0 panel-title" data-i18n="app.panel.chat">Chat</h5>
-                                <div class="d-flex align-items-center gap-2 panel-controls">
-                                    <button class="btn btn-outline-primary btn-sm" id="chat-new-task-btn" type="button" title="Start a new task thread in this session">
-                                        <i class="fa fa-plus"></i> <span data-i18n="app.chat.newTask">New task</span>
-                                    </button>
-                                    <button class="btn btn-outline-secondary btn-sm" id="chat-clear-btn">
-                                        <i class="fa fa-trash"></i> <span data-i18n="common.clear">Clear</span>
-                                    </button>
-                                    <button class="btn btn-outline-secondary btn-sm panel-collapse-btn" data-panel="center" title="Collapse">
-                                        <i class="fa fa-minus"></i>
-                                    </button>
-                                    <button class="btn btn-outline-secondary btn-sm panel-maximize-btn" data-panel="center" title="Maximize">
-                                        <i class="fa fa-expand"></i>
-                                    </button>
-                                    <button class="btn btn-outline-secondary btn-sm panel-restore-btn" data-panel="center" title="Restore">
-                                        <i class="fa fa-undo"></i>
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="card-body chat-area">
-                            <div class="text-center text-muted" id="chat-empty-hint">
-                                <span data-i18n="app.empty.chat">No messages yet. Type and send to start.</span>
-                            </div>
-                        </div>
-                        <div class="card-footer">
-                            <div class="form-check mb-2">
-                                <input class="form-check-input" type="checkbox" id="aria-action-screenshots" autocomplete="off">
-                                <label class="form-check-label text-muted" for="aria-action-screenshots" style="font-size:13px;" data-i18n="app.chat.actionScreenshots">
-                                    After browser/desktop actions, save a full-screen screenshot
-                                </label>
-                            </div>
-                            <div class="input-group">
-                                <input type="text" class="form-control" data-i18n="app.input.chat" data-i18n-attr="placeholder" placeholder="Type your question...">
-                                <button class="btn btn-primary" id="chat-send-btn">
-                                    <i class="fa fa-paper-plane"></i> <span data-i18n="common.send">Send</span>
-                                </button>
-                                <button class="btn btn-outline-danger" id="chat-cancel-btn" disabled style="display: none;">
-                                    <i class="fa fa-stop"></i> <span data-i18n="common.cancel">Cancel</span>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- 执行日志和多Agent协同侧边栏 -->
-                <div class="col-md-6 order-md-2 panel-col" id="panel-col-right">
-                    <!-- 执行日志 -->
-                    <div class="card panel-card" id="panel-card-right">
-                        <div class="card-header">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <h5 class="card-title mb-0 panel-title" data-i18n="app.panel.collab">Collaboration Log</h5>
-                                <div class="d-flex align-items-center gap-2 panel-controls">
-                                    <span class="text-muted" style="font-size:12px;" data-i18n="app.collabUnified">Unified collaboration view</span>
-                                    <button class="btn btn-outline-secondary btn-sm panel-collapse-btn" data-panel="right" title="Collapse">
-                                        <i class="fa fa-minus"></i>
-                                    </button>
-                                    <button class="btn btn-outline-secondary btn-sm panel-maximize-btn" data-panel="right" title="Maximize">
-                                        <i class="fa fa-expand"></i>
-                                    </button>
-                                    <button class="btn btn-outline-secondary btn-sm panel-restore-btn" data-panel="right" title="Restore">
-                                        <i class="fa fa-undo"></i>
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    <div class="card-body log-area" id="execution-log-area">
-                            <div class="text-center text-muted" id="execution-empty-hint">
-                                <span data-i18n="app.empty.logs">No logs yet. Send a task to view process.</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            </div>
             </div>
         </div>
 
@@ -632,7 +1012,7 @@
                     <div class="d-flex justify-content-between align-items-center">
                         <div>
                             <h5 class="card-title mb-0" data-i18n="app.tab.methods">Experience Center</h5>
-                            <p class="text-sm text-muted mb-0">Manage built-in and custom method templates to improve task efficiency.</p>
+                            <p class="text-muted mb-0 small">Manage built-in and custom method templates to improve task efficiency.</p>
                         </div>
                         <div>
                             <button class="btn btn-outline-secondary btn-sm mr-2">
@@ -730,6 +1110,17 @@
                             <span class="text-muted"><i class="fa fa-info-circle mr-1"></i> <span data-i18n="app.settings.apiDetecting">Detecting...</span></span>
                         </div>
                     </div>
+                    <div class="mb-4">
+                        <h6 class="font-weight-bold mb-3" data-i18n="app.settings.automationTitle">Computer control &amp; automation</h6>
+                        <p class="text-muted small mb-3" data-i18n="app.settings.automationBody">Without optional drivers, browser_click/browser_type and desktop_hotkey/desktop_type are simulated. Set ARIA_PLAYWRIGHT=1 and install Playwright + Chromium for real in-page actions; set ARIA_DESKTOP_UIA=1 on Windows with pywinauto for experimental hotkeys/typing. See README “Automation capability matrix” and .env.example.</p>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="aria-action-screenshots" autocomplete="off">
+                            <label class="form-check-label" for="aria-action-screenshots" data-i18n="app.settings.actionScreenshots">
+                                Capture full-screen after browser/desktop actions (saved under data/artifacts/screenshots)
+                            </label>
+                        </div>
+                        <p class="text-muted small mt-2 mb-0" data-i18n="app.settings.actionScreenshotsEnvHint">You can also enable this with ARIA_ACTION_SCREENSHOT=1 in .env (either setting is enough).</p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -745,6 +1136,34 @@
             await window.ariaI18n.init();
             const tr = (k, fb = '') => (window.ariaI18n ? window.ariaI18n.t(k, fb) : (fb || k));
             const tf = (k, vars = {}, fb = '') => (window.ariaI18n ? window.ariaI18n.format(tr(k, fb), vars) : (fb || k));
+            const WELCOME_MIN_STORAGE = 'aria_chat_welcome_min';
+            function applyChatWelcomeVisibility() {
+                const $full = $('#chat-empty-hint');
+                const $min = $('#chat-welcome-min');
+                if (!$full.length || !$min.length) return;
+                if (localStorage.getItem(WELCOME_MIN_STORAGE) === '1') {
+                    $full.addClass('d-none');
+                    $min.removeClass('d-none');
+                } else {
+                    $full.removeClass('d-none');
+                    $min.addClass('d-none');
+                }
+            }
+            applyChatWelcomeVisibility();
+            if (window.ariaI18n) window.ariaI18n.apply(document.querySelector('#panel-card-center'));
+            $('#chat-welcome-dismiss-btn').on('click', function() {
+                localStorage.setItem(WELCOME_MIN_STORAGE, '1');
+                applyChatWelcomeVisibility();
+            });
+            $('#chat-welcome-show-btn').on('click', function() {
+                localStorage.removeItem(WELCOME_MIN_STORAGE);
+                applyChatWelcomeVisibility();
+                if (window.ariaI18n) window.ariaI18n.apply(document.querySelector('.chat-area'));
+            });
+            window.addEventListener('aria:localeChanged', function() {
+                applyChatWelcomeVisibility();
+                if (window.ariaI18n) window.ariaI18n.apply(document.querySelector('#panel-card-center'));
+            });
             function formatTokenUsageLine(tu) {
                 if (!tu) return '';
                 const p = Number(tu.prompt_tokens) || 0;
@@ -773,6 +1192,9 @@
             let currentTaskId = null;
             /** 下一则用户消息携带 new_task: true（一次后由 sendMessage 清零） */
             let nextSendAsNewTask = false;
+            /** 待随下一条消息一并上传的文件（最多 8 个） */
+            const MAX_PENDING_CHAT_FILES = 8;
+            let pendingChatFiles = [];
             let pendingWorkflowEvents = [];
             let currentRequestId = null;
             let currentExecutionSessionId = null;
@@ -798,6 +1220,50 @@
                 right: { collapsed: false },
             };
             let layoutMode = 'default'; // default | left_max | center_max | right_max
+            const SPLIT_LS_KEY = 'aria_layout_fr';
+            let panelFr = [4, 5, 3]; // center, right, left — flex grow weights
+            try {
+                const raw = JSON.parse(localStorage.getItem(SPLIT_LS_KEY) || '');
+                if (Array.isArray(raw) && raw.length === 3 && raw.every((x) => typeof x === 'number' && x >= 0.5)) {
+                    panelFr = raw;
+                }
+            } catch (err) { /* keep default */ }
+            let colResizeDrag = null;
+            let splitResizeRaf = null;
+            let lastSplitPointerX = 0;
+
+            function canResizeChatColumns() {
+                const modeToPanel = { left_max: 'left', center_max: 'center', right_max: 'right' };
+                const maxPanel = modeToPanel[layoutMode] || null;
+                const allThree = !maxPanel && !panelState.left.collapsed && !panelState.center.collapsed && !panelState.right.collapsed;
+                try {
+                    return window.matchMedia('(min-width: 1200px)').matches && allThree;
+                } catch (err) {
+                    return window.innerWidth >= 1200 && allThree;
+                }
+            }
+
+            function updateSplitLayout(visiblePanels) {
+                const $split = $('#chat-panels-split');
+                if (canResizeChatColumns()) {
+                    $split.addClass('split-handles-visible');
+                    const [fc, fr, fl] = panelFr;
+                    $('#panel-col-center').css({ flex: `${fc} 1 0%`, minWidth: '200px', maxWidth: 'none' });
+                    $('#panel-col-right').css({ flex: `${fr} 1 0%`, minWidth: '180px', maxWidth: 'none' });
+                    $('#panel-col-left').css({ flex: `${fl} 1 0%`, minWidth: '180px', maxWidth: 'none' });
+                } else {
+                    $split.removeClass('split-handles-visible');
+                    // 非三列状态时清除 flex，让 Bootstrap 的 col-* 类接管布局
+                    $('#panel-col-center, #panel-col-right, #panel-col-left').css({ flex: '', minWidth: '', maxWidth: '' });
+                    // 如果只有两列可见，让它们平分空间
+                    if (visiblePanels && visiblePanels.length === 2) {
+                        visiblePanels.forEach(key => {
+                            const sel = key === 'left' ? '#panel-col-left' : key === 'center' ? '#panel-col-center' : '#panel-col-right';
+                            $(sel).css({ flex: '1 1 50%', maxWidth: '50%' });
+                        });
+                    }
+                }
+            }
 
             function escapeHtml(str) {
                 return $('<div/>').text(str == null ? '' : String(str)).html();
@@ -902,9 +1368,9 @@
 
             function applyPanelLayout() {
                 const panelMeta = {
-                    left: { sel: '#panel-col-left', defaultClass: 'col-md-3 order-md-3' },
-                    center: { sel: '#panel-col-center', defaultClass: 'col-md-3 order-md-1' },
-                    right: { sel: '#panel-col-right', defaultClass: 'col-md-6 order-md-2' },
+                    left: { sel: '#panel-col-left', defaultClass: 'col-12 order-1 order-xl-5 panel-col panel-col-split' },
+                    center: { sel: '#panel-col-center', defaultClass: 'col-12 order-2 order-xl-1 panel-col panel-col-split' },
+                    right: { sel: '#panel-col-right', defaultClass: 'col-12 order-3 order-xl-3 panel-col panel-col-split' },
                 };
                 const modeToPanel = {
                     left_max: 'left',
@@ -913,14 +1379,16 @@
                 };
                 const maxPanel = modeToPanel[layoutMode] || null;
 
+                const visiblePanels = [];
                 Object.entries(panelMeta).forEach(([key, meta]) => {
                     const $el = $(meta.sel);
-                    $el.removeClass('d-none col-md-2 col-md-3 col-md-6 col-md-8 col-md-12 order-md-1 order-md-2 order-md-3 panel-maximized');
+                    $el.removeClass('d-none col-md-2 col-md-3 col-md-6 col-md-8 col-md-12 col-xl-3 col-xl-4 col-xl-5 col-12 order-1 order-2 order-3 order-md-1 order-md-2 order-md-3 order-xl-1 order-xl-2 order-xl-3 order-xl-4 order-xl-5 panel-maximized panel-col-split');
                     const shouldCollapse = maxPanel ? key !== maxPanel : panelState[key].collapsed;
                     if (shouldCollapse) {
                         $el.addClass('d-none');
                         return;
                     }
+                    visiblePanels.push(key);
                     if (maxPanel) {
                         $el.addClass('col-md-12 panel-maximized');
                     } else {
@@ -943,6 +1411,7 @@
                 } else {
                     $bar.addClass('d-none');
                 }
+                updateSplitLayout(visiblePanels);
             }
 
             function buildTimelineEvents(events, options) {
@@ -1183,7 +1652,34 @@
                 const $chat = $('#chat .chat-area');
                 $chat.empty();
                 if (!messages || !messages.length) {
-                    $chat.html(`<div class="text-center text-muted" id="chat-empty-hint">${tr('app.empty.chat', 'No messages yet. Type and send to start.')}</div>`);
+                    $chat.html(
+                        `<div class="chat-welcome-min text-center d-none" id="chat-welcome-min">` +
+                        `<span data-i18n="app.chat.welcomeShort">${escapeHtml(tr('app.chat.welcomeShort', 'Ready. Type below to start.'))}</span> ` +
+                        `<button type="button" class="btn btn-link btn-sm p-0 ms-2 align-baseline" id="chat-welcome-show-btn" data-i18n="app.chat.welcomeShowTips">${escapeHtml(tr('app.chat.welcomeShowTips', 'Show tips'))}</button>` +
+                        `</div>` +
+                        `<div class="chat-welcome text-center" id="chat-empty-hint">` +
+                        `<div class="chat-welcome-avatar" aria-hidden="true"><img src="/static/img/aria-avatar.png" width="56" height="56" alt=""></div>` +
+                        `<div class="welcome-title" data-i18n="app.chat.welcomeTitle">${escapeHtml(tr('app.chat.welcomeTitle', "Hi, I'm ARIA"))}</div>` +
+                        `<p class="welcome-lead mb-0" data-i18n="app.chat.welcomeLead">${escapeHtml(tr('app.chat.welcomeLead', 'Ask in plain language — I will plan, execute, and learn from experience.'))}</p>` +
+                        `<ul class="text-start mx-auto mt-3" style="max-width:300px;">` +
+                        `<li data-i18n="app.chat.welcomeB1">${escapeHtml(tr('app.chat.welcomeB1', 'Type below, press Enter to send (Shift+Enter for new line)'))}</li>` +
+                        `<li data-i18n="app.chat.welcomeB2">${escapeHtml(tr('app.chat.welcomeB2', 'Drop files here or use the paperclip to attach'))}</li>` +
+                        `<li data-i18n="app.chat.welcomeB3">${escapeHtml(tr('app.chat.welcomeB3', 'Without an API key you will still get a simulated reply; check Settings for key status'))}</li>` +
+                        `</ul>` +
+                        `<button type="button" class="btn btn-outline-secondary btn-sm mt-2" id="chat-welcome-dismiss-btn" data-i18n="app.chat.welcomeDismiss">${escapeHtml(tr('app.chat.welcomeDismiss', 'Hide tips'))}</button>` +
+                        `</div>`
+                    );
+                    applyChatWelcomeVisibility();
+                    $('#chat-welcome-dismiss-btn').off('click').on('click', function() {
+                        localStorage.setItem(WELCOME_MIN_STORAGE, '1');
+                        applyChatWelcomeVisibility();
+                    });
+                    $('#chat-welcome-show-btn').off('click').on('click', function() {
+                        localStorage.removeItem(WELCOME_MIN_STORAGE);
+                        applyChatWelcomeVisibility();
+                        if (window.ariaI18n) window.ariaI18n.apply($chat[0]);
+                    });
+                    if (window.ariaI18n) window.ariaI18n.apply($chat[0]);
                     return;
                 }
                 messages.forEach(msg => {
@@ -1396,16 +1892,21 @@
                 }
                 list.forEach(item => {
                     const activeClass = item.conversation_id === currentConversationId ? 'bg-primary bg-opacity-10' : '';
+                    const lastMsg = (item.last_message || '').replace(/\n/g, '<br>');
                     $list.append(`
                         <div class="session-item mb-2 p-2 rounded ${activeClass}" data-id="${escapeHtml(item.conversation_id)}" style="cursor:pointer;">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <span class="font-weight-bold">${escapeHtml(item.title || tr('app.session.newDefault', 'New Session'))}</span>
-                                <div class="d-flex align-items-center gap-2">
-                                    <span class="text-xs text-muted">${escapeHtml(formatTimestamp(item.updated_at))}</span>
-                                    <button class="btn btn-outline-secondary btn-sm archive-conversation-btn" data-id="${escapeHtml(item.conversation_id)}" type="button">${tr('app.session.archive', 'Archive')}</button>
-                                </div>
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <span class="font-weight-bold text-truncate" style="max-width:65%;">${escapeHtml(item.title || tr('app.session.newDefault', 'New Session'))}</span>
+                                <span class="text-xs text-muted flex-shrink-0">${escapeHtml(formatTimestamp(item.updated_at))}</span>
                             </div>
-                            <div class="text-sm text-muted">${escapeHtml(item.last_message || '')}</div>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div class="last-message-preview text-sm text-muted text-truncate" style="max-width:85%;">${lastMsg}</div>
+                                <button class="btn btn-sm btn-link text-danger p-0 ml-2 flex-shrink-0 session-delete-btn" 
+                                    title="${escapeHtml(tr('app.session.delete', 'Delete conversation'))}" 
+                                    style="min-width:28px;">
+                                    <i class="fa fa-trash"></i>
+                                </button>
+                            </div>
                         </div>
                     `);
                 });
@@ -1485,6 +1986,7 @@
                         }
                         loadConversations();
                         startWorkflowStream(false, true);
+                        focusChatInput();
                     }
                 });
             }
@@ -1505,6 +2007,7 @@
                         renderWorkflowAndLogs([], []);
                         loadConversations();
                         startWorkflowStream(true, false);
+                        focusChatInput();
                     }
                 });
             }
@@ -1645,12 +2148,83 @@
                 });
             }
 
+            function fileDedupeKey(f) {
+                return `${f.name}|${f.size}|${f.lastModified}`;
+            }
+
+            function addPendingChatFiles(fileList) {
+                if (!fileList || !fileList.length) return;
+                const existing = new Set(pendingChatFiles.map(fileDedupeKey));
+                const arr = Array.from(fileList);
+                for (let i = 0; i < arr.length; i++) {
+                    if (pendingChatFiles.length >= MAX_PENDING_CHAT_FILES) break;
+                    const f = arr[i];
+                    if (!f || !f.name) continue;
+                    if (f.size === 0) continue;
+                    const k = fileDedupeKey(f);
+                    if (existing.has(k)) continue;
+                    existing.add(k);
+                    pendingChatFiles.push(f);
+                }
+                renderPendingAttachHint();
+            }
+
+            function renderPendingAttachHint() {
+                const $box = $('#chat-pending-files');
+                if (!pendingChatFiles.length) {
+                    $box.empty();
+                    return;
+                }
+                const rmTitle = tr('app.chat.removeFile', 'Remove file');
+                const chips = pendingChatFiles.map((f, idx) => {
+                    const ext = (String(f.name).split('.').pop() || '').toLowerCase();
+                    let icon = 'fa-file-o';
+                    if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) icon = 'fa-file-image-o';
+                    else if (ext === 'pdf') icon = 'fa-file-pdf-o';
+                    else if (['doc', 'docx'].includes(ext)) icon = 'fa-file-word-o';
+                    else if (['xls', 'xlsx', 'xlsm', 'csv'].includes(ext)) icon = 'fa-file-excel-o';
+                    else if (ext === 'pptx') icon = 'fa-file-powerpoint-o';
+                    return (
+                        `<span class="chat-attach-chip" title="${escapeHtml(f.name)}">` +
+                        `<i class="fa ${icon}" aria-hidden="true"></i>` +
+                        `<span class="chat-attach-chip-name">${escapeHtml(f.name)}</span>` +
+                        `<button type="button" class="chat-attach-chip-remove" data-idx="${idx}" title="${escapeHtml(rmTitle)}" aria-label="${escapeHtml(rmTitle)}">&times;</button>` +
+                        `</span>`
+                    );
+                }).join('');
+                const clearAll =
+                    `<button type="button" class="btn btn-link btn-sm p-0 align-baseline text-muted" id="chat-clear-files" style="font-size:12px;">` +
+                    `${tr('app.chat.clearAll', 'Clear all')}</button>`;
+                $box.html(
+                    `<div class="d-flex flex-wrap align-items-center gap-2 w-100">${chips}<span class="ms-auto">${clearAll}</span></div>`
+                );
+            }
+
             function appendOptimisticUserMessage(text) {
                 const $chat = $('#chat .chat-area');
-                $chat.find('#chat-empty-hint').remove();
+                $chat.find('#chat-empty-hint, #chat-welcome-min').remove();
                 $chat.append(`<div class="chat-message user-message"><div class="message-content">${escapeHtml(text)}</div></div>`);
-                $chat.append(`<div class="chat-message ai-message" id="temp-ai-message"><div class="message-content">${tr('app.request.processing', 'Processing your request...')}</div></div>`);
+                const thinking = tr('app.request.thinking', 'Thinking');
+                $chat.append(
+                    `<div class="chat-message ai-message" id="temp-ai-message"><div class="message-content ai-typing-indicator">` +
+                    `${escapeHtml(thinking)}<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>` +
+                    `</div></div>`
+                );
                 $chat.scrollTop($chat.prop('scrollHeight'));
+            }
+
+            function adjustChatTextareaHeight() {
+                const el = document.getElementById('chat-text-input');
+                if (!el) return;
+                el.style.height = 'auto';
+                el.style.height = Math.min(140, Math.max(44, el.scrollHeight)) + 'px';
+            }
+
+            function focusChatInput() {
+                const $t = $('#chat-text-input');
+                if ($t.length && !$t.prop('disabled')) {
+                    $t.trigger('focus');
+                }
             }
 
             function formatActionPlanHtml(plan) {
@@ -1737,19 +2311,24 @@
                 const $area = $('#execution-log-area');
                 const sid = currentExecutionSessionId || '';
                 const disabled = sid ? '' : 'disabled';
-                const sidText = sid ? escapeHtml(sid) : tr('app.exec.none', 'None');
+                const sidBlock = sid
+                    ? `<code class="user-select-all">${escapeHtml(sid)}</code>`
+                    : `<span class="text-muted">${escapeHtml(tr('app.exec.noActiveSession', 'No active run'))}</span>`;
+                const et = (s) => escapeHtml(s);
                 const panel = `
                     <div class="card mb-2">
                         <div class="card-body py-2 px-3">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <div class="text-muted" style="font-size:12px;">${tr('app.exec.title', 'Execution Control')}</div>
-                                <div class="text-muted" style="font-size:12px;">session: <code>${sidText}</code></div>
+                            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                                <div class="text-muted fw-semibold" style="font-size:12px;">${et(tr('app.exec.title', 'Execution control'))}</div>
+                                <div class="text-muted" style="font-size:12px;">${et(tr('app.exec.sessionLabel', 'Session'))}: ${sidBlock}</div>
                             </div>
                             <div class="d-flex align-items-center" style="gap:8px;flex-wrap:wrap;">
-                                <button class="btn btn-outline-secondary btn-sm exec-pause-btn" type="button" ${disabled}>${tr('app.exec.pause', 'Pause')}</button>
-                                <button class="btn btn-outline-secondary btn-sm exec-resume-btn" type="button" ${disabled}>${tr('app.exec.resume', 'Resume')}</button>
-                                <button class="btn btn-outline-warning btn-sm exec-takeover-btn" type="button" ${disabled}>${tr('app.exec.takeover', 'Manual Takeover')}</button>
-                                <button class="btn btn-outline-danger btn-sm exec-abort-btn" type="button" ${disabled}>${tr('app.exec.abort', 'Abort')}</button>
+                                <button class="btn btn-outline-secondary btn-sm exec-pause-btn" type="button" ${disabled}
+                                    title="${et(tr('app.exec.pauseHint', 'Pause automated execution'))}">${et(tr('app.exec.pause', 'Pause'))}</button>
+                                <button class="btn btn-outline-secondary btn-sm exec-resume-btn" type="button" ${disabled}
+                                    title="${et(tr('app.exec.resumeHint', 'Resume after pause'))}">${et(tr('app.exec.resume', 'Resume'))}</button>
+                                <button class="btn btn-outline-danger btn-sm exec-abort-btn" type="button" ${disabled}
+                                    title="${et(tr('app.exec.abortHint', 'Abort execution session'))}">${et(tr('app.exec.abort', 'Abort'))}</button>
                             </div>
                         </div>
                     </div>
@@ -1830,7 +2409,7 @@
                     success: function(resp) {
                         const msg = escapeHtml((resp && resp.status) || action);
                         $('#execution-log-area').prepend(`<div class="text-xs text-muted mb-1">control: ${msg}</div>`);
-                        if (action === 'abort' || action === 'takeover') {
+                        if (action === 'abort') {
                             stopExecutionStatusPolling();
                         }
                     }
@@ -1840,9 +2419,10 @@
             function sendMessage() {
                 const $sendBtn = $('#chat-send-btn');
                 const $cancelBtn = $('#chat-cancel-btn');
-                const $input = $('#chat .input-group input');
+                const $input = $('#chat-text-input');
                 const userInput = ($input.val() || '').trim();
-                if (!userInput) return;
+                if (!userInput && !pendingChatFiles.length) return;
+                $input.css('height', 'auto');
                 const sendAsNewTask = nextSendAsNewTask;
                 nextSendAsNewTask = false;
                 // 为本次任务生成前端 request_id，协作日志/SSE 也会带同一个 request_id 供前端过滤
@@ -1860,54 +2440,98 @@
                 currentWorkflowEvents = [];
                 workflowEventIds = new Set();
                 renderWorkflowAndLogs([], []);
-                appendOptimisticUserMessage(userInput);
+                let optimisticUser = userInput;
+                if (pendingChatFiles.length) {
+                    const fnames = pendingChatFiles.map(f => f.name).join(', ');
+                    optimisticUser = (optimisticUser ? optimisticUser + '\n\n' : '') +
+                        '[' + tf('app.chat.attachSummary', { n: String(pendingChatFiles.length), names: fnames }, `${pendingChatFiles.length} file(s): ${fnames}`) + ']';
+                }
+                appendOptimisticUserMessage(optimisticUser);
                 $input.val('');
+                adjustChatTextareaHeight();
 
                 function processWithConversationId(convId) {
-                    $.ajax({
-                        url: '/api/process_input',
-                        type: 'POST',
-                        contentType: 'application/json',
-                        data: JSON.stringify({
-                            user_input: userInput,
-                            conversation_id: convId,
-                            request_id: requestId,
-                            task_id: currentTaskId || '',
-                            new_task: !!sendAsNewTask,
-                            action_screenshots: isActionScreenshotsEnabled(),
-                        }),
-                        success: function(resp) {
-                            currentConversationId = resp.conversation_id || currentConversationId;
-                            currentTaskId = resp.task_id || currentTaskId;
-                            currentExecutionSessionId = resp.execution_session_id || currentExecutionSessionId;
-                            const escaped = escapeHtml(resp.result || '').replace(/\n/g, '<br>');
-                            $('#temp-ai-message .message-content').html(escaped);
-                            appendTokenUsageToAiMessage($('#temp-ai-message'), resp.token_usage);
-                            $('#temp-ai-message').removeAttr('id');
-                            if (resp.needs_confirmation && resp.pending_actions) {
-                                renderPendingActionsCard(resp.pending_actions);
-                            }
-                            if (resp.execution_session_id) {
-                                startExecutionStatusPolling();
-                            }
-                            renderWorkflowAndLogs(resp.logs || [], resp.workflow_events || []);
-                            loadConversations();
-                            loadMethodologies();
-                        },
-                        error: function() {
-                            $('#temp-ai-message .message-content').html(`<span class="text-danger">${tr('app.request.failed', 'Request failed. Please retry later.')}</span>`);
-                        },
-                        complete: function() {
-                            // 恢复发送按钮，隐藏中止按钮
-                            $sendBtn.show();
-                            $cancelBtn.hide().prop('disabled', true);
-                            $input.prop('disabled', false);
-                            isTaskRunning = false;
-                            if (currentConversationId) {
-                                startWorkflowStream();
-                            }
+                    const hasFiles = pendingChatFiles.length > 0;
+                    const onSuccess = function(resp) {
+                        pendingChatFiles = [];
+                        $('#chat-file-input').val('');
+                        renderPendingAttachHint();
+                        currentConversationId = resp.conversation_id || currentConversationId;
+                        currentTaskId = resp.task_id || currentTaskId;
+                        currentExecutionSessionId = resp.execution_session_id || currentExecutionSessionId;
+                        const escaped = escapeHtml(resp.result || '').replace(/\n/g, '<br>');
+                        $('#temp-ai-message .message-content').html(escaped);
+                        appendTokenUsageToAiMessage($('#temp-ai-message'), resp.token_usage);
+                        $('#temp-ai-message').removeAttr('id');
+                        if (resp.needs_confirmation && resp.pending_actions) {
+                            renderPendingActionsCard(resp.pending_actions);
                         }
-                    });
+                        if (resp.execution_session_id) {
+                            startExecutionStatusPolling();
+                        }
+                        renderWorkflowAndLogs(resp.logs || [], resp.workflow_events || []);
+                        loadConversations();
+                        loadMethodologies();
+                    };
+                    const onError = function(xhr) {
+                        let msg = tr('app.request.failed', 'Request failed. Please retry later.');
+                        if (xhr && xhr.responseJSON && typeof xhr.responseJSON === 'object') {
+                            const j = xhr.responseJSON;
+                            if (j.message) msg = String(j.message);
+                            else if (j.result) msg = String(j.result);
+                        } else if (xhr && xhr.status === 0) {
+                            msg = tr('app.request.network', 'Network error. Is the server running?');
+                        }
+                        $('#temp-ai-message .message-content').html(`<span class="text-danger">${escapeHtml(msg)}</span>`);
+                    };
+                    const onComplete = function() {
+                        $sendBtn.show();
+                        $cancelBtn.hide().prop('disabled', true);
+                        $input.prop('disabled', false);
+                        isTaskRunning = false;
+                        adjustChatTextareaHeight();
+                        focusChatInput();
+                        if (currentConversationId) {
+                            startWorkflowStream();
+                        }
+                    };
+                    if (hasFiles) {
+                        const fd = new FormData();
+                        fd.append('user_input', userInput);
+                        fd.append('conversation_id', convId);
+                        fd.append('request_id', requestId);
+                        fd.append('task_id', currentTaskId || '');
+                        fd.append('new_task', sendAsNewTask ? 'true' : 'false');
+                        fd.append('action_screenshots', isActionScreenshotsEnabled() ? 'true' : 'false');
+                        pendingChatFiles.forEach(function(f) { fd.append('files', f); });
+                        $.ajax({
+                            url: '/api/process_input',
+                            type: 'POST',
+                            data: fd,
+                            processData: false,
+                            contentType: false,
+                            success: onSuccess,
+                            error: onError,
+                            complete: onComplete,
+                        });
+                    } else {
+                        $.ajax({
+                            url: '/api/process_input',
+                            type: 'POST',
+                            contentType: 'application/json',
+                            data: JSON.stringify({
+                                user_input: userInput,
+                                conversation_id: convId,
+                                request_id: requestId,
+                                task_id: currentTaskId || '',
+                                new_task: !!sendAsNewTask,
+                                action_screenshots: isActionScreenshotsEnabled(),
+                            }),
+                            success: onSuccess,
+                            error: onError,
+                            complete: onComplete,
+                        });
+                    }
                 }
 
                 if (!currentConversationId) {
@@ -1943,6 +2567,8 @@
             loadApiKeyStatus();
             loadMethodologies();
             loadConversations(true);
+            adjustChatTextareaHeight();
+            setTimeout(function() { focusChatInput(); }, 450);
 
             // 事件绑定
             (function initActionScreenshotsToggle() {
@@ -1960,11 +2586,59 @@
                 return $('#aria-action-screenshots').is(':checked');
             }
 
-            $('#new-conversation-btn').click(function() { createConversation(tr('app.session.newDefault', 'New Session')); });
-            $('#chat-new-task-btn').click(function() {
-                currentTaskId = null;
-                nextSendAsNewTask = true;
+            $('#chat-attach-btn').on('click', function() { $('#chat-file-input').trigger('click'); });
+            $('#chat-file-input').on('change', function() {
+                addPendingChatFiles(this.files);
+                this.value = '';
             });
+            $('#chat-pending-files').on('click', '#chat-clear-files', function() {
+                pendingChatFiles = [];
+                $('#chat-file-input').val('');
+                renderPendingAttachHint();
+            });
+            $('#chat-pending-files').on('click', '.chat-attach-chip-remove', function() {
+                const idx = parseInt($(this).attr('data-idx'), 10);
+                if (!Number.isNaN(idx) && idx >= 0 && idx < pendingChatFiles.length) {
+                    pendingChatFiles.splice(idx, 1);
+                    renderPendingAttachHint();
+                }
+            });
+
+            (function initChatComposerDrag() {
+                const $c = $('#chat-composer');
+                let depth = 0;
+                $c.on('dragenter', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    depth++;
+                    $c.addClass('drag-over');
+                });
+                $c.on('dragleave', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    depth--;
+                    if (depth <= 0) {
+                        depth = 0;
+                        $c.removeClass('drag-over');
+                    }
+                });
+                $c.on('dragover', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                });
+                $c.on('drop', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    depth = 0;
+                    $c.removeClass('drag-over');
+                    const dt = e.originalEvent && e.originalEvent.dataTransfer;
+                    if (dt && dt.files && dt.files.length) {
+                        addPendingChatFiles(dt.files);
+                    }
+                });
+            })();
+
+            $('#new-conversation-btn').click(function() { createConversation(tr('app.session.newDefault', 'New Session')); });
             $('#chat-clear-btn').click(function() {
                 if (!currentConversationId) return;
                 renderConversationMessages([]);
@@ -2031,34 +2705,46 @@
             $('#execution-log-area').on('click', '.exec-pause-btn', function() { callExecutionControl('pause'); });
             $('#execution-log-area').on('click', '.exec-resume-btn', function() { callExecutionControl('resume'); });
             $('#execution-log-area').on('click', '.exec-abort-btn', function() { callExecutionControl('abort'); });
-            $('#execution-log-area').on('click', '.exec-takeover-btn', function() { callExecutionControl('takeover'); });
-            $('#chat .input-group input').on('keypress', function(e) {
-                if (e.which === 13) {
+            $('#chat-text-input').on('keydown', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     sendMessage();
                 }
             });
-            $('#conversation-list').on('click', '.session-item', function() {
+            $('#chat-text-input').on('input', function() {
+                adjustChatTextareaHeight();
+            });
+            $('#chat-tab').on('shown.bs.tab', function() {
+                if (!isTaskRunning) focusChatInput();
+            });
+            $('#conversation-list').on('click', '.session-item', function(e) {
+                if ($(e.target).closest('.session-delete-btn').length) return;
                 const id = $(this).attr('data-id');
                 if (!id) return;
                 loadConversationDetail(id);
             });
-            $('#conversation-list').on('click', '.archive-conversation-btn', function(e) {
+            $('#conversation-list').on('click', '.session-delete-btn', function(e) {
                 e.stopPropagation();
-                const id = $(this).attr('data-id');
+                const id = $(this).closest('.session-item').attr('data-id');
                 if (!id) return;
+                if (!confirm(tr('app.session.deleteConfirm', 'Delete this conversation? This cannot be undone.'))) return;
                 $.ajax({
-                    url: `/api/conversations/${id}/archive`,
-                    type: 'POST',
-                    contentType: 'application/json',
-                    data: JSON.stringify({ archived: true }),
+                    url: `/api/conversations/${id}`,
+                    type: 'DELETE',
                     success: function(resp) {
                         if (resp.success) {
                             if (id === currentConversationId) {
-                                createConversation(tr('app.session.newDefault', 'New Session'));
+                                currentConversationId = null;
+                                renderConversationMessages([]);
+                                renderWorkflowAndLogs([], []);
                             }
-                            loadConversations();
+                            loadConversations(true);
+                        } else {
+                            alert(tr('app.session.deleteFail', 'Failed to delete. Please retry.'));
                         }
+                    },
+                    error: function() {
+                        alert(tr('app.session.deleteFail', 'Failed to delete. Please retry.'));
                     }
                 });
             });
@@ -2292,11 +2978,115 @@
                 loadApiKeyStatus();
                 loadConversations(true);
                 loadMethodologies();
+                if (pendingChatFiles.length) {
+                    renderPendingAttachHint();
+                }
             });
 
             window.addEventListener('beforeunload', function() {
                 stopWorkflowStream();
             });
+
+            function applyColumnResizeFromDrag() {
+                const d = colResizeDrag;
+                if (!d) return;
+                const dx = lastSplitPointerX - d.startX;
+                if (d.which === 0) {
+                    const sum = d.wC + d.wR;
+                    const minC = 200;
+                    const minR = 180;
+                    let cW = d.wC + dx;
+                    let rW = d.wR - dx;
+                    if (cW < minC) { cW = minC; rW = sum - minC; }
+                    if (rW < minR) { rW = minR; cW = sum - minR; }
+                    const t = d.fc + d.fr;
+                    panelFr[0] = (cW / sum) * t;
+                    panelFr[1] = (rW / sum) * t;
+                    panelFr[2] = d.fl;
+                } else {
+                    const sum = d.wR + d.wL;
+                    const minR = 180;
+                    const minL = 180;
+                    let rW = d.wR + dx;
+                    let lW = d.wL - dx;
+                    if (rW < minR) { rW = minR; lW = sum - minR; }
+                    if (lW < minL) { lW = minL; rW = sum - minL; }
+                    const t = d.fr + d.fl;
+                    panelFr[1] = (rW / sum) * t;
+                    panelFr[2] = (lW / sum) * t;
+                    panelFr[0] = d.fc;
+                }
+                updateSplitLayout();
+            }
+
+            function beginColumnResize(which, el, clientX) {
+                if (!canResizeChatColumns()) return false;
+                const c = document.getElementById('panel-col-center');
+                const r = document.getElementById('panel-col-right');
+                const l = document.getElementById('panel-col-left');
+                if (!c || !r || !l) return false;
+                if (which === 0) {
+                    colResizeDrag = {
+                        which: 0,
+                        startX: clientX,
+                        fc: panelFr[0],
+                        fr: panelFr[1],
+                        fl: panelFr[2],
+                        wC: c.getBoundingClientRect().width,
+                        wR: r.getBoundingClientRect().width,
+                    };
+                } else {
+                    colResizeDrag = {
+                        which: 1,
+                        startX: clientX,
+                        fc: panelFr[0],
+                        fr: panelFr[1],
+                        fl: panelFr[2],
+                        wR: r.getBoundingClientRect().width,
+                        wL: l.getBoundingClientRect().width,
+                    };
+                }
+                lastSplitPointerX = clientX;
+                $(el).addClass('dragging');
+                return true;
+            }
+
+            $('#col-resize-handle-0').on('mousedown', function (e) {
+                if (e.button !== 0) return;
+                if (!canResizeChatColumns()) return;
+                e.preventDefault();
+                e.stopPropagation();
+                beginColumnResize(0, this, e.clientX);
+            });
+            $('#col-resize-handle-1').on('mousedown', function (e) {
+                if (e.button !== 0) return;
+                if (!canResizeChatColumns()) return;
+                e.preventDefault();
+                e.stopPropagation();
+                beginColumnResize(1, this, e.clientX);
+            });
+            $(document).on('mousemove', function (e) {
+                if (!colResizeDrag) return;
+                lastSplitPointerX = e.clientX;
+                if (splitResizeRaf != null) return;
+                splitResizeRaf = requestAnimationFrame(function () {
+                    splitResizeRaf = null;
+                    applyColumnResizeFromDrag();
+                });
+            });
+            $(document).on('mouseup', function () {
+                if (colResizeDrag) {
+                    try {
+                        localStorage.setItem(SPLIT_LS_KEY, JSON.stringify(panelFr));
+                    } catch (err) { /* ignore */ }
+                    $('.column-resize-handle.dragging').removeClass('dragging');
+                    colResizeDrag = null;
+                }
+            });
+            $(window).on('resize', function () {
+                updateSplitLayout();
+            });
+
             applyPanelLayout();
         });
     </script>

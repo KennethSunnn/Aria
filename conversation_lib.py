@@ -65,8 +65,11 @@ class ConversationLibrary:
 
     def list_conversations(self, archived: bool | None = None) -> list[dict[str, Any]]:
         conversations = self._load()
-        if archived is not None:
-            conversations = [c for c in conversations if bool(c.get("archived", False)) == archived]
+        if archived is True:
+            conversations = [c for c in conversations if bool(c.get("archived", False))]
+        else:
+            # None（默认）与 False：侧边栏仅展示未归档
+            conversations = [c for c in conversations if not bool(c.get("archived", False))]
         conversations.sort(key=lambda c: c.get("updated_at", 0), reverse=True)
         return [
             {
@@ -130,6 +133,15 @@ class ConversationLibrary:
                 return True
         return False
 
+    def delete_conversation(self, conversation_id: str) -> bool:
+        conversations = self._load()
+        before = len(conversations)
+        conversations = [c for c in conversations if c.get("conversation_id") != conversation_id]
+        if len(conversations) < before:
+            self._save(conversations)
+            return True
+        return False
+
     def replace_workflow_events(self, conversation_id: str, events: list[dict[str, Any]]) -> bool:
         conversations = self._load()
         now = time.time()
@@ -166,6 +178,17 @@ class ConversationLibrary:
             if role not in ("user", "assistant"):
                 continue
             raw = str(m.get("content") or "").strip()
+            meta = m.get("meta") if isinstance(m.get("meta"), dict) else {}
+            atts = meta.get("attachments")
+            if isinstance(atts, list) and atts:
+                names = [
+                    str(a.get("name") or "").strip()
+                    for a in atts
+                    if isinstance(a, dict) and (a.get("name") or a.get("path"))
+                ]
+                if names:
+                    hint = "[附件: " + ", ".join(names[:8]) + ("]" if len(names) <= 8 else "…]")
+                    raw = (raw + " " if raw else "") + hint
             if not raw:
                 continue
             if len(raw) > max_chars_per_message:

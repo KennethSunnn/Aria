@@ -1,8 +1,20 @@
 python-dotenv
+PyYAML>=6.0.1
 requests
 openai>=1.40.0
-gradio
 flask
 python-docx
 openpyxl
 python-pptx
+pypdf>=4.0.0
+Pillow>=10.0.0
+
+# Windows 桌面自动化
+pywinauto>=0.6.8; sys_platform == "win32"
+pyautogui>=0.9.54; sys_platform == "win32"
+
+# OCR 屏幕识别
+pytesseract>=0.3.13
+
+# 浏览器自动化（可选）
+playwright>=1.40.0

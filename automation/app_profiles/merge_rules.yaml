@@ -1,0 +1,8 @@
+# 连续动作合并：同一任务中若先 A 再 B 且关键字段相同，则只保留 B（避免重复搜索等）。
+# 新应用可在此追加条目，无需改 Python。
+
+merge_pairs:
+  - first: wechat_open_chat
+    second: wechat_send_message
+    # 比较 contact：params.contact_name / params.contact / target
+    id_fields: [contact_name, contact, target]
