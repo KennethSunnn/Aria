@@ -2,6 +2,13 @@
 
 ARIA is an LLM-powered Autonomous Recursive Intelligent Agent that understands natural language instructions and automatically executes various tasks, including desktop operations, browser automation, WeChat messaging, file processing, and more.
 
+## Recent Updates (2026-03-30)
+
+- Added a clear action risk policy (`safe` / `medium` / `high`) and confirmation behavior.
+- Added methodology health API endpoint: `GET /api/methodology_health`.
+- Added regression benchmark script: `scripts/run_regression_benchmark.py`.
+- Added regression report output path: `data/benchmarks/latest_regression_report.json`.
+
 ## Core Features
 
 - 🤖 **Intelligent Task Parsing**: Automatically analyzes user requirements and breaks them down into executable subtasks
@@ -166,6 +173,14 @@ Core workflow:
 - `ARIA_WECHAT_PREFER_DESKTOP`: Prefer desktop WeChat client (set to 1)
 - `ARIA_ACTION_SCREENSHOT`: Auto full-screen screenshot after actions (set to 1)
 
+### Action Risk Policy (safe / medium / high)
+
+- `safe`: auto execute directly
+- `medium`: require one confirmation
+- `high`: require double confirmation
+
+Risk level is inferred from action plan + action type and is returned in action-plan responses.
+
 ### Reasoning Effort Levels
 
 | Level | Use Case | Token Consumption |
@@ -205,6 +220,7 @@ The system automatically selects the effort level based on task type, or you can
 - `POST /api/update_methodology_category`: Update category
 - `DELETE /api/delete_methodology`: Delete single methodology
 - `POST /api/delete_methodologies_batch`: Batch delete
+- `GET /api/methodology_health`: Methodology health dashboard (quality/AB stats)
 
 ## Usage Examples
 
@@ -265,6 +281,16 @@ Adjust in `memory/memory_system.py`:
 - `search_similar_methodologies()`: Similarity calculation algorithm
 - `CATEGORY_RULES` in `method_lib.py`: Classification rules
 
+### Regression Benchmark
+
+Use built-in benchmark tasks to validate planner coverage and risk-layer behavior:
+
+```bash
+python scripts/run_regression_benchmark.py
+```
+
+Report is written to `data/benchmarks/latest_regression_report.json`.
+
 ## Important Notes
 
 1. **API Key Security**: Do not commit `.env` file to version control
@@ -300,4 +326,4 @@ For questions or suggestions, please contact via:
 
 ---
 
-**Last Updated**: 2026-03-29
+**Last Updated**: 2026-03-30

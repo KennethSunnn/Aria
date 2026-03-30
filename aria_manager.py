@@ -497,6 +497,7 @@ class ARIAManager:
         self.allowed_work_root = Path(os.path.abspath("."))
         self.max_action_steps = 30
         self.default_step_timeout_s = 90
+        self._ab_context_by_task: dict[str, dict[str, Any]] = {}
         self.last_model_trace: dict[str, Any] = {}
         self.shell_blocklist = [
             "rm -rf /",
@@ -2136,16 +2137,26 @@ class ARIAManager:
         return "\n".join(lines)
 
     def requires_double_confirmation(self, actions: list[dict[str, Any]]) -> bool:
-        # 高风险动作或包含桌面自动化操作（desktop_type/desktop_hotkey）时强制双确认
+        return self.evaluate_action_risk_level(actions) == "high"
+
+    def evaluate_action_risk_level(self, actions: list[dict[str, Any]]) -> str:
+        """
+        三层风险策略：
+        - safe: 可自动执行
+        - medium: 需一次确认
+        - high: 需二次确认
+        """
+        level = "safe"
         for a in (actions or []):
             if not isinstance(a, dict):
                 continue
-            if (a.get("risk") or "medium") == "high":
-                return True
-            action_type = str(a.get("type") or "")
-            if action_type in ("desktop_type", "desktop_hotkey", "desktop_sequence", "send_social_message"):
-                return True
-        return False
+            action_type = self._normalize_action_type_alias(str(a.get("type") or ""))
+            risk = str(a.get("risk") or "medium").strip().lower()
+            if risk == "high" or action_type in self.HIGH_RISK_ACTION_TYPES:
+                return "high"
+            if risk == "medium" or action_type in self.USER_GATE_ACTION_TYPES:
+                level = "medium"
+        return level
 
     def actions_require_user_gate(self, actions: list[dict[str, Any]]) -> bool:
         """本地写文件、删文件、终端、打开桌面应用等须用户确认后才执行，不参与自动执行。"""
@@ -2221,6 +2232,62 @@ class ARIAManager:
         t = (action_type or "").strip()
         return mapping.get(t, t)
 
+    def _capability_unavailable_result(self, action_type: str, capability: str, hint: str = "") -> dict[str, Any]:
+        return {
+            "success": False,
+            "message": "unavailable_capability",
+            "error_code": "unavailable_capability",
+            "action_type": action_type,
+            "capability": capability,
+            "retryable": True,
+            "needs_manual_takeover": False,
+            "stderr": hint or capability,
+            "artifacts": [],
+            "screenshots": [],
+        }
+
+    def _verify_action_result(self, action_type: str, action: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+        try:
+            if action_type == "file_write" and bool(result.get("success")):
+                path = str((action.get("params") or {}).get("path") or action.get("target") or "").strip()
+                if path:
+                    ok = self._ensure_safe_path(path).is_file()
+                    return {"checked": True, "ok": bool(ok), "method": "file_exists"}
+            if action_type == "file_move" and bool(result.get("success")):
+                dst = str((action.get("params") or {}).get("dst") or "").strip()
+                if dst:
+                    ok = self._ensure_safe_path(dst).exists()
+                    return {"checked": True, "ok": bool(ok), "method": "dst_exists"}
+            if action_type == "file_delete" and bool(result.get("success")):
+                path = str((action.get("params") or {}).get("path") or action.get("target") or "").strip()
+                if path:
+                    ok = not self._ensure_safe_path(path).exists()
+                    return {"checked": True, "ok": bool(ok), "method": "path_not_exists"}
+        except Exception:
+            return {"checked": True, "ok": False, "method": "verification_exception"}
+        return {"checked": False, "ok": None, "method": "none"}
+
+    def _normalize_action_result(
+        self,
+        action_type: str,
+        action: dict[str, Any],
+        raw_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = dict(raw_result or {})
+        msg = str(result.get("message") or "")
+        if msg.endswith("_simulated") or "_simulated:" in msg:
+            hint = "当前能力未启用或依赖未安装，已拒绝用模拟成功掩盖真实执行状态"
+            if action_type.startswith("browser_"):
+                hint = "browser 实际控制不可用，请启用 ARIA_PLAYWRIGHT=1 并安装 playwright"
+            elif action_type.startswith("desktop_"):
+                hint = "desktop 实际注入不可用，请启用 ARIA_DESKTOP_UIA=1 并安装 pywinauto"
+            return self._capability_unavailable_result(action_type, f"{action_type}_runtime", hint=hint)
+        result.setdefault("error_code", "" if result.get("success") is not False else "execution_failed")
+        result.setdefault("retryable", bool(result.get("success") is False))
+        result.setdefault("needs_manual_takeover", False)
+        result["verification"] = self._verify_action_result(action_type, action, result)
+        return result
+
     def execute_actions(
         self,
         actions: list[dict[str, Any]],
@@ -2243,6 +2310,10 @@ class ARIAManager:
                 "input": action,
                 "status": "error",
                 "duration_ms": 0,
+                "error_code": "",
+                "retryable": False,
+                "needs_manual_takeover": False,
+                "verification": {"checked": False, "ok": None, "method": "none"},
                 "stdout": "",
                 "stderr": "",
                 "artifacts": [],
@@ -2250,7 +2321,8 @@ class ARIAManager:
             }
             if not handler:
                 row["stderr"] = "unsupported_action"
-                row["result"] = {"success": False, "message": "unsupported_action"}
+                row["error_code"] = "unsupported_action"
+                row["result"] = {"success": False, "message": "unsupported_action", "error_code": "unsupported_action"}
                 row["duration_ms"] = int((time.time() - started) * 1000)
                 report.append(row)
                 continue
@@ -2263,15 +2335,22 @@ class ARIAManager:
             )
             try:
                 result = handler(action, conversation_id, methodology_manager, conversation_manager)
-                row["result"] = result if isinstance(result, dict) else {"success": True, "output": result}
+                base = result if isinstance(result, dict) else {"success": True, "output": result}
+                row["result"] = self._normalize_action_result(action_type, action, base)
                 row["status"] = "success" if row["result"].get("success") is not False else "error"
+                row["error_code"] = str(row["result"].get("error_code") or "")
+                row["retryable"] = bool(row["result"].get("retryable"))
+                row["needs_manual_takeover"] = bool(row["result"].get("needs_manual_takeover"))
+                row["verification"] = row["result"].get("verification") or row["verification"]
                 row["stdout"] = str(row["result"].get("stdout") or row["result"].get("message") or "")
                 row["stderr"] = str(row["result"].get("stderr") or "")
                 row["artifacts"] = row["result"].get("artifacts") or []
                 row["screenshots"] = row["result"].get("screenshots") or []
             except Exception as e:
                 row["stderr"] = str(e)
-                row["result"] = {"success": False, "message": str(e)}
+                row["error_code"] = "execution_exception"
+                row["retryable"] = True
+                row["result"] = {"success": False, "message": str(e), "error_code": "execution_exception", "retryable": True}
             row["duration_ms"] = int((time.time() - started) * 1000)
             self.push_event(
                 "computer_action",
@@ -2282,6 +2361,7 @@ class ARIAManager:
                     "step_id": idx,
                     "action_type": action_type,
                     "status": row["status"],
+                    "error_code": row["error_code"],
                     "duration_ms": row["duration_ms"],
                     "stdout": row["stdout"][:300],
                     "stderr": row["stderr"][:300],
@@ -2291,7 +2371,18 @@ class ARIAManager:
             )
             report.append(row)
         success_count = sum(1 for r in report if r.get("status") == "success")
-        return {"success_count": success_count, "total": len(report), "report": report}
+        unavailable_count = sum(
+            1
+            for r in report
+            if str((r.get("result") or {}).get("error_code") or r.get("error_code") or "") == "unavailable_capability"
+        )
+        return {
+            "success_count": success_count,
+            "total": len(report),
+            "failed_count": max(0, len(report) - success_count),
+            "unavailable_count": unavailable_count,
+            "report": report,
+        }
 
     def execute_based_on_complexity(
         self,
@@ -2332,9 +2423,20 @@ class ARIAManager:
                     "scene": plan.get("summary", "")[:500],
                     "solve_steps": [f"{i+1}. {a.get('type')}: {a.get('reason', '')[:200]}" for i, a in enumerate(actions)],
                     "keywords": [],
+                    "risk_level": self.evaluate_action_risk_level(actions),
+                    "quality_metrics": {
+                        "total_steps": int(result.get("total", 0) or 0),
+                        "success_steps": int(result.get("success_count", 0) or 0),
+                        "failed_steps": int(result.get("failed_count", 0) or 0),
+                        "unavailable_count": int(result.get("unavailable_count", 0) or 0),
+                    },
+                    "score": (
+                        float(result.get("success_count", 0) or 0.0)
+                        / max(1, float(result.get("total", 0) or 1.0))
+                    ),
                 }
                 try:
-                    methodology_manager.add_methodology(method["scene"], method["keywords"], method["solve_steps"])
+                    methodology_manager.add_methodology(method)
                     self.push_log("MethodSaver", "方法论已保存", "completed")
                 except Exception as e:
                     self.push_log("MethodSaver", f"方法论保存失败：{e}", "warning")
@@ -2368,6 +2470,8 @@ class ARIAManager:
         conversation_manager: Any,
         *,
         action_screenshots: bool = False,
+        plan_summary: str = "",
+        plan_risk_level: str = "medium",
     ) -> str:
         session_id = str(uuid.uuid4())
         with self.execution_lock:
@@ -2385,6 +2489,8 @@ class ARIAManager:
                 "report": [],
                 "error": "",
                 "action_screenshots": bool(action_screenshots),
+                "plan_summary": str(plan_summary or ""),
+                "plan_risk_level": str(plan_risk_level or "medium"),
                 "_methodology_manager": methodology_manager,
                 "_conversation_manager": conversation_manager,
             }
@@ -2479,6 +2585,83 @@ class ARIAManager:
         )
         conversation_manager.replace_workflow_events(conversation_id, wfe)
 
+    def _compute_execution_quality_metrics(self, report: list[dict[str, Any]], risk_level: str = "medium") -> dict[str, Any]:
+        total = len(report or [])
+        success = sum(1 for r in (report or []) if str(r.get("status")) == "success")
+        unavailable = sum(
+            1
+            for r in (report or [])
+            if str((r.get("result") or {}).get("error_code") or r.get("error_code") or "") == "unavailable_capability"
+        )
+        retryable = sum(1 for r in (report or []) if bool(r.get("retryable")))
+        confirmations = 2 if str(risk_level or "medium") == "high" else (1 if str(risk_level or "medium") == "medium" else 0)
+        duration_ms = sum(int(r.get("duration_ms", 0) or 0) for r in (report or []))
+        success_rate = (success / total) if total > 0 else 0.0
+        return {
+            "total_steps": total,
+            "success_steps": success,
+            "failed_steps": max(0, total - success),
+            "success_rate": round(success_rate, 4),
+            "unavailable_count": unavailable,
+            "retryable_failures": retryable,
+            "confirmations": confirmations,
+            "duration_ms": duration_ms,
+        }
+
+    def _score_from_quality_metrics(self, metrics: dict[str, Any]) -> float:
+        success_rate = float(metrics.get("success_rate", 0.0) or 0.0)
+        unavailable_penalty = float(metrics.get("unavailable_count", 0) or 0) * 0.1
+        retry_penalty = float(metrics.get("retryable_failures", 0) or 0) * 0.05
+        score = max(0.0, min(1.0, success_rate - unavailable_penalty - retry_penalty))
+        return round(score, 4)
+
+    def _refine_method_steps_from_report(self, actions: list[dict[str, Any]], report: list[dict[str, Any]]) -> list[str]:
+        steps: list[str] = []
+        for i, a in enumerate(actions or [], start=1):
+            t = str(a.get("type") or "")
+            reason = str(a.get("reason") or "").strip()
+            steps.append(f"{i}. {t} - {reason or '执行该步骤'}")
+        failed = [r for r in (report or []) if str(r.get("status") or "") != "success"]
+        if failed:
+            steps.append(f"{len(steps)+1}. 若失败，先读取 error_code / stderr，优先重试 retryable 步骤。")
+            steps.append(f"{len(steps)+1}. 若能力不可用（unavailable_capability），切换可用驱动或请求用户手动接管。")
+        return steps
+
+    def _auto_learn_from_execution_session(
+        self,
+        *,
+        actions: list[dict[str, Any]],
+        report: list[dict[str, Any]],
+        summary: str,
+        risk_level: str,
+    ) -> dict[str, Any]:
+        metrics = self._compute_execution_quality_metrics(report)
+        score = self._score_from_quality_metrics(metrics)
+        steps = self._refine_method_steps_from_report(actions, report)
+        scene = (summary or "执行计划").strip()[:500]
+        keywords = sorted(
+            {
+                str(a.get("type") or "").strip()
+                for a in (actions or [])
+                if str(a.get("type") or "").strip()
+            }
+        )[:10]
+        method = {
+            "scene": scene,
+            "scenario": scene,
+            "keywords": keywords,
+            "core_keywords": keywords,
+            "solve_steps": steps,
+            "outcome_type": "stable",
+            "risk_level": (risk_level or "medium"),
+            "score": score,
+            "quality_metrics": metrics,
+            "evidence_refs": [f"action_report_steps:{len(report or [])}"],
+            "is_success": metrics.get("failed_steps", 0) == 0,
+        }
+        saved = self.ltm.add_methodology(method)
+        return {"saved": saved, "metrics": metrics, "score": score}
+
     def _run_execution_session(self, session_id: str) -> None:
         self.reset_token_usage()
         with self.execution_lock:
@@ -2491,6 +2674,8 @@ class ARIAManager:
             conversation_id = sess.get("conversation_id") or ""
             request_id = sess.get("request_id") or ""
             shot_flag = bool(sess.get("action_screenshots"))
+            plan_summary = str(sess.get("plan_summary") or "")
+            plan_risk_level = str(sess.get("plan_risk_level") or "medium")
         prev_shots = bool(getattr(self, "action_screenshots_for_execution", False))
         self.action_screenshots_for_execution = shot_flag
         report: list[dict[str, Any]] = []
@@ -2535,7 +2720,26 @@ class ARIAManager:
                 cur["status"] = "completed"
                 cur["updated_at"] = time.time()
                 cur["token_usage"] = self.get_token_usage_summary()
+                cur["quality_metrics"] = self._compute_execution_quality_metrics(report, risk_level=plan_risk_level)
+                cur["quality_score"] = self._score_from_quality_metrics(cur["quality_metrics"])
 
+            if report:
+                try:
+                    learn = self._auto_learn_from_execution_session(
+                        actions=actions,
+                        report=report,
+                        summary=plan_summary,
+                        risk_level=plan_risk_level,
+                    )
+                    self.push_event(
+                        "method_auto_iterate",
+                        "success",
+                        "MethodSaver",
+                        "执行后已自动更新方法论版本",
+                        {"score": learn.get("score"), "metrics": learn.get("metrics")},
+                    )
+                except Exception as e:
+                    self.push_log("MethodSaver", f"自动迭代保存失败：{e}", "warning")
             self._append_execution_report_to_conversation(conversation_id, conversation_manager, report)
         finally:
             self.action_screenshots_for_execution = prev_shots
@@ -2589,6 +2793,8 @@ class ARIAManager:
                 "created_at": sess.get("created_at"),
                 "updated_at": sess.get("updated_at"),
                 "token_usage": sess.get("token_usage"),
+                "quality_metrics": sess.get("quality_metrics") or {},
+                "quality_score": sess.get("quality_score"),
             }
 
     def _exec_kb_delete_all(self, action: dict[str, Any], conversation_id: str, methodology_manager: Any, conversation_manager: Any) -> dict[str, Any]:
@@ -4139,6 +4345,9 @@ class ARIAManager:
         self.record_model_thought("MethodSearcher", "从长期记忆中查找方法论")
         exact = self.find_exact_methodology(task_info.get("user_input", ""))
         if exact:
+            mid = str((exact or {}).get("method_id") or "")
+            if mid:
+                self.ltm.record_method_hit(mid, retrieval_score=1.0)
             self.record_model_thought("MethodSearcher", "命中同问句精确复用")
             self.push_event(
                 "method_match",
@@ -4156,9 +4365,16 @@ class ARIAManager:
         results = self.ltm.search_methodology(query)
         
         best_match = None
-        best_score = 0
+        best_score = 0.0
+        ab_meta: dict[str, Any] = {}
         if results:
-            best_score, best_match = results[0]
+            best_score, best_match, ab_meta = self._select_methodology_candidate(task_info, results)
+            chosen_mid = str((best_match or {}).get("method_id") or "")
+            if chosen_mid:
+                self.ltm.record_method_hit(chosen_mid, retrieval_score=float(best_score or 0.0))
+            task_id = str(task_info.get("task_id") or "")
+            if task_id and isinstance(ab_meta, dict) and str(ab_meta.get("mode") or "") == "ab_bandit":
+                self._ab_context_by_task[task_id] = dict(ab_meta)
             self.record_model_thought("MethodSearcher", f"成功找到匹配方法论，相似度：{best_score:.2f}")
         else:
             self.record_model_thought("MethodSearcher", "未找到匹配的方法论")
@@ -4169,11 +4385,75 @@ class ARIAManager:
             "success",
             "MethodSearcher",
             f"方法论匹配完成，相似度 {best_score:.2f}",
-            {"score": best_score},
+            {"score": best_score, "ab": ab_meta},
         )
         self.push_log("MethodSearcher", f"找到匹配方案，相似度：{best_score:.2f}", "completed")
         self.check_cancelled("method_match_end")
         return best_score, best_match
+
+    def _select_methodology_candidate(
+        self,
+        task_info: dict[str, Any],
+        results: list[tuple[float, dict[str, Any]]],
+    ) -> tuple[float, dict[str, Any] | None, dict[str, Any]]:
+        """
+        A/B 候选选择：
+        - 默认选加权分最高的 A
+        - 当 A 与 B 接近时，按“分数 + 探索奖励”做小概率探索，避免陷入单一版本
+        """
+        if not results:
+            return 0.0, None, {}
+        if len(results) == 1:
+            s, m = results[0]
+            return float(s), m, {"mode": "single", "chosen": "A"}
+
+        (a_score, a_method), (b_score, b_method) = results[0], results[1]
+        gap = float(a_score) - float(b_score)
+        if gap >= 0.12:
+            return float(a_score), a_method, {"mode": "greedy", "chosen": "A", "gap": round(gap, 4)}
+
+        eps_raw = (os.getenv("ARIA_METHOD_AB_EXPLORATION") or "0.2").strip()
+        try:
+            epsilon = max(0.0, min(0.5, float(eps_raw)))
+        except Exception:
+            epsilon = 0.2
+        epsilon = float(self.ltm.get_adaptive_ab_epsilon(epsilon))
+
+        a_usage = int((a_method or {}).get("usage_count", 0) or 0)
+        b_usage = int((b_method or {}).get("usage_count", 0) or 0)
+        # 使用次数越低探索奖励越高
+        a_bonus = 0.06 / (1 + a_usage)
+        b_bonus = 0.06 / (1 + b_usage)
+        a_bandit = float(a_score) + a_bonus
+        b_bandit = float(b_score) + b_bonus
+
+        force_explore = random.random() < epsilon
+        choose_b = force_explore or (b_bandit > a_bandit)
+        chosen_arm = "B" if choose_b else "A"
+        chosen_score = float(b_score if choose_b else a_score)
+        chosen_method = b_method if choose_b else a_method
+        meta = {
+            "mode": "ab_bandit",
+            "chosen": chosen_arm,
+            "gap": round(gap, 4),
+            "epsilon": epsilon,
+            "arms": {
+                "A": {
+                    "method_id": str((a_method or {}).get("method_id") or ""),
+                    "score": round(float(a_score), 4),
+                    "usage": a_usage,
+                    "bandit": round(a_bandit, 4),
+                },
+                "B": {
+                    "method_id": str((b_method or {}).get("method_id") or ""),
+                    "score": round(float(b_score), 4),
+                    "usage": b_usage,
+                    "bandit": round(b_bandit, 4),
+                },
+            },
+            "task_id": str(task_info.get("task_id") or ""),
+        }
+        return chosen_score, chosen_method, meta
 
     # 3. 无方案 → 调用外网大模型学习
     def learn_from_external(self, task_info: dict) -> dict:
@@ -4592,10 +4872,27 @@ class ARIAManager:
         return {"final_result": final_result, "is_success": is_success}
 
     # 8. 保存方法论
+    def _record_method_feedback(self, task_info: dict, method: dict, result_payload: Any) -> None:
+        task_id = str(task_info.get("task_id") or "")
+        method_id = str((method or {}).get("method_id") or "")
+        is_success = bool(result_payload.get("is_success", False)) if isinstance(result_payload, dict) else False
+        quality_score = 1.0 if is_success else 0.0
+        if isinstance(result_payload, dict):
+            try:
+                quality_score = float(result_payload.get("score", quality_score) or quality_score)
+            except Exception:
+                quality_score = 1.0 if is_success else 0.0
+        if method_id:
+            self.ltm.record_method_outcome(method_id, is_success=is_success, quality_score=quality_score)
+        ab_meta = self._ab_context_by_task.pop(task_id, None) if task_id else None
+        if isinstance(ab_meta, dict):
+            self.ltm.record_ab_outcome(ab_meta, is_success=is_success, quality_score=quality_score)
+
     def save_methodology(self, task_info: dict, method: dict, result_payload: Any):
         self.check_cancelled("method_save_start")
         should_save, skip_reason, judge_source = self._should_save_methodology(task_info, method or {}, result_payload)
         if not should_save:
+            self._record_method_feedback(task_info, method or {}, result_payload)
             self.record_model_thought(
                 "MethodSaver",
                 f"知识沉淀判定为跳过，reason={skip_reason}, source={judge_source}"
@@ -4628,8 +4925,21 @@ class ARIAManager:
         normalized_method = self._normalize_methodology(method or {}, task_info)
         normalized_method["success_count"] = 1 if is_success else 0
         normalized_method["is_success"] = is_success
+        if isinstance(result_payload, dict):
+            quality_metrics = result_payload.get("quality_metrics")
+            if isinstance(quality_metrics, dict):
+                normalized_method["quality_metrics"] = quality_metrics
+            try:
+                normalized_method["score"] = float(result_payload.get("score", normalized_method.get("score", 0.0)) or 0.0)
+            except Exception:
+                normalized_method["score"] = float(normalized_method.get("score", 0.0) or 0.0)
+        normalized_method.setdefault("evidence_refs", [])
+        normalized_method["evidence_refs"] = list(normalized_method.get("evidence_refs") or []) + [
+            f"task_id:{task_info.get('task_id', '')}".strip(":"),
+        ]
 
         self.ltm.add_methodology(normalized_method)
+        self._record_method_feedback(task_info, normalized_method, result_payload)
         
         # 保存到中期记忆作为模板
         task_template = {

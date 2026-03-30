@@ -1033,6 +1033,11 @@
                                     <i class="fa fa-search"></i> <span data-i18n="common.search">Search</span>
                                 </button>
                             </div>
+                            <div class="mt-2">
+                                <button id="methodology-health-btn" class="btn btn-outline-info btn-sm" type="button">
+                                    <i class="fa fa-heartbeat"></i> Health Dashboard
+                                </button>
+                            </div>
                         </div>
                         <div class="col-md-3">
                             <select class="form-select" id="method-category-filter">
@@ -2024,6 +2029,9 @@
                     const title = m.title || m.scene || tr('app.method.unnamed', 'Untitled');
                     const category = m.category || tr('app.method.general', 'General');
                     const successCount = m.success_count ?? 0;
+                    const version = Number(m.version || 1);
+                    const score = Number(m.score ?? 0);
+                    const scoreText = Number.isFinite(score) ? score.toFixed(2) : '0.00';
                     const methodId = m.method_id || '';
                     const checked = selectedMethodologyIds.has(methodId) ? 'checked' : '';
                     $list.append(`
@@ -2034,6 +2042,7 @@
                             </div>
                             <div class="text-xs text-muted mt-1">${tr('app.method.category', 'Category')}: ${escapeHtml(category)}</div>
                             <div class="text-xs text-muted mt-1">${tr('app.method.successCount', 'Success Count')}: ${escapeHtml(String(successCount))}</div>
+                            <div class="text-xs text-muted mt-1">Version: ${escapeHtml(String(version))} | Quality: ${escapeHtml(scoreText)}</div>
                         </div>
                     `);
                 });
@@ -2048,7 +2057,16 @@
                 const solveSteps = method.solve_steps || [];
                 const applicableRange = method.applicable_range || '';
                 const successCount = method.success_count ?? 0;
+                const usageCount = method.usage_count ?? 0;
+                const version = Number(method.version || 1);
+                const parentVersion = method.parent_version ?? '';
+                const qualityScore = Number(method.score ?? 0);
+                const qualityText = Number.isFinite(qualityScore) ? qualityScore.toFixed(3) : '0.000';
+                const qualityMetrics = method.quality_metrics && typeof method.quality_metrics === 'object' ? method.quality_metrics : {};
                 const keywordText = Array.isArray(keywords) ? keywords.join('、') : String(keywords || '');
+                const qmText = Object.keys(qualityMetrics).length
+                    ? escapeHtml(JSON.stringify(qualityMetrics))
+                    : tr('app.method.none', 'No methods yet.');
                 const stepsHtml = Array.isArray(solveSteps) && solveSteps.length
                     ? `<ol>${solveSteps.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ol>`
                     : `<p class="text-muted">${tr('app.method.noSteps', 'No solve steps')}</p>`;
@@ -2068,6 +2086,7 @@
                             <div class="text-muted" style="font-size:12px;">ID: ${escapeHtml(methodId)}</div>
                             <div>
                                 <button class="btn btn-outline-secondary btn-sm mr-2" id="refresh-methodologies-btn" type="button">${tr('app.method.refresh', 'Refresh')}</button>
+                                <button class="btn btn-outline-info btn-sm mr-2" id="show-method-health-btn" type="button">Health</button>
                                 <button class="btn btn-outline-danger btn-sm" id="delete-methodology-btn" data-method-id="${escapeHtml(methodId)}" type="button">${tr('app.method.delete', 'Delete')}</button>
                             </div>
                         </div>
@@ -2088,6 +2107,10 @@
                         <p><strong>${tr('app.method.keywords', 'Keywords')}:</strong> ${escapeHtml(keywordText)}</p>
                         <p><strong>${tr('app.method.range', 'Applicable Range')}:</strong> ${escapeHtml(applicableRange || tr('app.method.general', 'General'))}</p>
                         <p><strong>${tr('app.method.successCount', 'Success Count')}:</strong> ${escapeHtml(String(successCount))}</p>
+                        <p><strong>Usage Count:</strong> ${escapeHtml(String(usageCount))}</p>
+                        <p><strong>Version:</strong> ${escapeHtml(String(version))}${parentVersion !== '' ? ` (parent: ${escapeHtml(String(parentVersion))})` : ''}</p>
+                        <p><strong>Quality Score:</strong> ${escapeHtml(qualityText)}</p>
+                        <p><strong>Quality Metrics:</strong> <code>${qmText}</code></p>
                         <div><strong>${tr('app.method.steps', 'Steps')}:</strong>${stepsHtml}</div>
                     </div>
                 `);
@@ -2099,6 +2122,69 @@
                     type: 'GET',
                     success: function(resp) {
                         renderMethodologyList(resp.methodologies || []);
+                    }
+                });
+            }
+
+            function renderMethodologyHealthDashboard(payload) {
+                const rows = Array.isArray(payload && payload.rows) ? payload.rows : [];
+                const summary = payload && payload.summary ? payload.summary : {};
+                const header = `
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="mb-0">Methodology Health Dashboard</h6>
+                        <button class="btn btn-outline-secondary btn-sm" id="refresh-method-health-btn" type="button">Refresh</button>
+                    </div>
+                    <div class="text-muted small mb-2">
+                        Pairs: ${escapeHtml(String(summary.pair_count || 0))} |
+                        Methods: ${escapeHtml(String(summary.method_count || 0))} |
+                        Updated: ${escapeHtml(String(summary.updated_at || '-'))}
+                    </div>
+                `;
+                if (!rows.length) {
+                    $('#methodology-detail-body').html(`${header}<div class="text-center text-muted">No health data yet.</div>`);
+                    return;
+                }
+                const bodyRows = rows.map((r) => `
+                    <tr>
+                        <td>${escapeHtml(String(r.title || r.method_id || ''))}</td>
+                        <td>${escapeHtml(String(r.version || 1))}</td>
+                        <td>${escapeHtml(Number(r.score || 0).toFixed(3))}</td>
+                        <td>${escapeHtml(Number(r.quality_score_avg || 0).toFixed(3))}</td>
+                        <td>${escapeHtml(String(r.success_rate || 0))}</td>
+                        <td>${escapeHtml(String(r.hits || 0))}</td>
+                        <td>${escapeHtml(String(r.outcomes || 0))}</td>
+                    </tr>
+                `).join('');
+                $('#methodology-detail-body').html(`
+                    ${header}
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Method</th>
+                                    <th>Version</th>
+                                    <th>Score</th>
+                                    <th>Avg Quality</th>
+                                    <th>Success Rate</th>
+                                    <th>Hits</th>
+                                    <th>Outcomes</th>
+                                </tr>
+                            </thead>
+                            <tbody>${bodyRows}</tbody>
+                        </table>
+                    </div>
+                `);
+            }
+
+            function loadMethodologyHealth() {
+                $.ajax({
+                    url: '/api/methodology_health?limit=100',
+                    type: 'GET',
+                    success: function(resp) {
+                        renderMethodologyHealthDashboard(resp || {});
+                    },
+                    error: function() {
+                        $('#methodology-detail-body').html('<div class="text-danger">Failed to load health dashboard.</div>');
                     }
                 });
             }
@@ -2275,8 +2361,8 @@
                             ${needDouble ? `<div class="text-warning mb-2">${tr('app.actionPlan.highRiskHint', 'High-risk actions require a second confirmation.')}</div>` : ''}
                             <div class="alert alert-secondary py-2 px-3 mb-2" style="font-size:13px;">${tr('app.actionPlan.mustClick', 'You must click the confirm button below to run commands.')}</div>
                             <div class="d-flex align-items-center" style="gap:8px;">
-                                <button class="btn btn-sm btn-primary confirm-action-btn" type="button">${tr('app.actionPlan.confirmBtn', 'Confirm and Execute')}</button>
-                                <button class="btn btn-sm btn-outline-secondary reject-action-btn" type="button">${tr('app.actionPlan.rejectBtn', 'Cancel')}</button>
+                                <button class="btn btn-sm btn-primary confirm-action-btn" type="button" title="${tr('app.actionPlan.confirmBtn', 'Confirm and Execute')}" aria-label="${tr('app.actionPlan.confirmBtn', 'Confirm and Execute')}">✓</button>
+                                <button class="btn btn-sm btn-outline-secondary reject-action-btn" type="button" title="${tr('app.actionPlan.rejectBtn', 'Cancel')}" aria-label="${tr('app.actionPlan.rejectBtn', 'Cancel')}">✕</button>
                                 <span class="text-muted">${tr('app.actionPlan.confirmHint', 'No action will run before confirmation.')}</span>
                             </div>
                         </div>
@@ -2291,7 +2377,7 @@
                 const $card = $chat.find('.pending-action-card').last();
                 const $btn = $card.find('.confirm-action-btn');
                 const force = $btn.attr('data-force') === '1';
-                $btn.prop('disabled', true).text(tr('app.actionPlan.confirming', 'Executing...'));
+                $btn.prop('disabled', true).text('…');
 
                 $.ajax({
                     url: '/api/confirm_actions',
@@ -2316,12 +2402,12 @@
                         if (xhr && xhr.status === 409 && xhr.responseJSON && xhr.responseJSON.requires_double_confirmation) {
                             const msg = xhr.responseJSON.message || tr('app.actionPlan.doubleConfirmNeeded', 'Second confirmation is required for high-risk actions.');
                             $chat.append(`<div class="chat-message ai-message"><div class="message-content"><span class="text-warning">${escapeHtml(msg)}</span></div></div>`);
-                            $btn.attr('data-force', '1').prop('disabled', false).text(tr('app.actionPlan.doubleConfirmBtn', 'High Risk: Click Again to Execute'));
+                            $btn.attr('data-force', '1').prop('disabled', false).text('✓');
                             return;
                         }
                         const msg = (xhr && xhr.responseJSON && xhr.responseJSON.message) || tr('app.actionPlan.confirmFailed', 'Failed to execute actions.');
                         $chat.append(`<div class="chat-message ai-message"><div class="message-content"><span class="text-danger">${escapeHtml(msg)}</span></div></div>`);
-                        $btn.prop('disabled', false).text(tr('app.actionPlan.confirmBtn', 'Confirm and Execute'));
+                        $btn.prop('disabled', false).text('✓');
                     }
                 });
             }
@@ -2919,6 +3005,7 @@
                 });
             }
             $('#methodology-search-btn').click(performMethodologySearch);
+            $('#methodology-health-btn').click(loadMethodologyHealth);
             $('#methodology-search-input').on('keypress', function(e) {
                 if (e.which === 13) {
                     e.preventDefault();
@@ -2953,6 +3040,8 @@
                 }
             });
             $('#methodology-detail-body').on('click', '#refresh-methodologies-btn', loadMethodologies);
+            $('#methodology-detail-body').on('click', '#show-method-health-btn', loadMethodologyHealth);
+            $('#methodology-detail-body').on('click', '#refresh-method-health-btn', loadMethodologyHealth);
             $('#methodology-detail-body').on('click', '#delete-methodology-btn', function() {
                 const id = $(this).attr('data-method-id');
                 if (!id) return;

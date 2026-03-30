@@ -4,6 +4,7 @@ import time
 import uuid
 import re
 from typing import Any
+from memory.memory_system import LongTermMemory
 
 class MethodologyLibrary:
     CATEGORY_RULES = [
@@ -17,6 +18,8 @@ class MethodologyLibrary:
     def __init__(self, file_path="data/methodology/methodologies.json"):
         self.file_path = file_path
         self.feedback_file = "data/methodology/category_feedback.json"
+        self._ltm = LongTermMemory()
+        self._ltm.load()
         # 确保目录存在
         os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
         # 确保文件存在
@@ -29,19 +32,13 @@ class MethodologyLibrary:
 
     # 加载方法论库
     def load_methodologies(self):
-        try:
-            with open(self.file_path, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-                if not isinstance(raw, list):
-                    return []
-                return [self.normalize_methodology(m) for m in raw if isinstance(m, dict)]
-        except Exception:
-            return []
+        self._ltm.load()
+        return [self.normalize_methodology(m) for m in self._ltm.get_all_methodologies()]
 
     # 保存方法论库
     def save_methodologies(self, methodologies):
-        with open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(methodologies, f, ensure_ascii=False, indent=2)
+        self._ltm.methodologies = [self.normalize_methodology(m) for m in (methodologies or []) if isinstance(m, dict)]
+        self._ltm.save()
 
     def _load_category_feedback(self):
         try:
@@ -136,6 +133,18 @@ class MethodologyLibrary:
         category = method.get("category") or feedback_category or self._pick_category(" ".join([title, scene, " ".join(keywords)]))
         created_at = method.get("created_at") or method.get("create_time") or time.strftime("%Y-%m-%d %H:%M:%S")
         updated_at = method.get("updated_at") or method.get("last_update_time") or created_at
+        try:
+            version = max(1, int(method.get("version", 1)))
+        except Exception:
+            version = 1
+        try:
+            score = float(method.get("score", 0.0))
+        except Exception:
+            score = 0.0
+        quality_metrics = method.get("quality_metrics") if isinstance(method.get("quality_metrics"), dict) else {}
+        evidence_refs = method.get("evidence_refs") if isinstance(method.get("evidence_refs"), list) else []
+        version_history = method.get("version_history") if isinstance(method.get("version_history"), list) else []
+        retrieval_meta = method.get("retrieval_meta") if isinstance(method.get("retrieval_meta"), dict) else {}
         return {
             "method_id": method_id,
             "title": title,
@@ -147,115 +156,95 @@ class MethodologyLibrary:
             "status": method.get("status", "published"),
             "usage_count": int(method.get("usage_count", 0)),
             "success_count": int(method.get("success_count", 0)),
+            "version": version,
+            "parent_version": method.get("parent_version"),
+            "rollback_to": method.get("rollback_to"),
+            "score": max(0.0, min(1.0, score)),
+            "quality_metrics": quality_metrics,
+            "evidence_refs": evidence_refs,
+            "version_history": version_history,
+            "retrieval_meta": retrieval_meta,
             "event_key": event_key,
             "create_time": created_at,
             "updated_at": updated_at,
         }
 
     # 添加方法论
-    def add_methodology(self, scene, keywords, solve_steps):
-        methodologies = self.load_methodologies()
-        new_methodology = self.normalize_methodology({
-            "method_id": str(uuid.uuid4()),
-            "title": scene[:24] if scene else "新方法论",
-            "category": self._pick_category(scene or ""),
-            "scene": scene,
-            "keywords": keywords,
-            "solve_steps": solve_steps,
-            "status": "published",
-            "usage_count": 0,
-            "success_count": 0,
-            "create_time": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        })
-        same_idx = self._find_similar_methodology(methodologies, new_methodology)
-        if same_idx >= 0:
-            existing = methodologies[same_idx]
-            existing["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-            existing["usage_count"] = int(existing.get("usage_count", 0)) + 1
-            existing["success_count"] = max(int(existing.get("success_count", 0)), int(new_methodology.get("success_count", 0)))
-            # 同事件保留更清晰标题，但避免频繁抖动
-            if len(new_methodology.get("title", "")) > len(existing.get("title", "")):
-                existing["title"] = new_methodology.get("title", existing.get("title"))
-            existing["category"] = self._pick_category(" ".join([
-                existing.get("title", ""),
-                existing.get("scene", ""),
-                " ".join(existing.get("keywords", [])),
-            ]))
-            methodologies[same_idx] = self.normalize_methodology(existing)
-            self.save_methodologies(methodologies)
-            return methodologies[same_idx]
-        methodologies.append(new_methodology)
-        self.save_methodologies(methodologies)
-        return new_methodology
+    def add_methodology(self, scene, keywords=None, solve_steps=None):
+        # 兼容旧接口 add_methodology(scene, keywords, solve_steps)
+        if isinstance(scene, dict):
+            payload = dict(scene)
+        else:
+            payload = {
+                "method_id": str(uuid.uuid4()),
+                "title": (str(scene or "")[:24] if scene else "新方法论"),
+                "category": self._pick_category(str(scene or "")),
+                "scene": scene,
+                "keywords": keywords or [],
+                "solve_steps": solve_steps or [],
+                "status": "published",
+                "usage_count": 0,
+                "success_count": 0,
+                "create_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        normalized = self.normalize_methodology(payload)
+        self._ltm.load()
+        return self._ltm.add_methodology(normalized)
 
     # 查找方法论
     def search_methodologies(self, query):
-        methodologies = self.load_methodologies()
-        results = []
-        q = (query or "").lower().strip()
-        for method in methodologies:
-            haystack = " ".join([
-                method.get("title", ""),
-                method.get("category", ""),
-                method.get("scene", ""),
-                " ".join(method.get("keywords", [])),
-                " ".join(method.get("solve_steps", [])),
-            ]).lower()
-            if (not q) or (q in haystack):
-                results.append(method)
-        return results
+        self._ltm.load()
+        q = (query or "").strip()
+        if not q:
+            return self._ltm.get_all_methodologies()
+        return self._ltm.search_methodologies(q)
 
     # 获取所有方法论
     def get_all_methodologies(self):
-        return self.load_methodologies()
+        self._ltm.load()
+        return self._ltm.get_all_methodologies()
 
     # 删除方法论
     def delete_methodology(self, method_id):
-        methodologies = self.load_methodologies()
-        new_methodologies = [method for method in methodologies if method["method_id"] != method_id]
-        if len(new_methodologies) != len(methodologies):
-            self.save_methodologies(new_methodologies)
-            return True
-        return False
+        self._ltm.load()
+        return self._ltm.delete_methodology(method_id)
 
     def delete_methodologies_batch(self, method_ids: list[str]):
-        ids = {str(i).strip() for i in (method_ids or []) if str(i).strip()}
-        if not ids:
-            return {"success": False, "deleted_count": 0, "remaining_count": len(self.load_methodologies())}
-        methodologies = self.load_methodologies()
-        new_methodologies = [m for m in methodologies if str(m.get("method_id", "")) not in ids]
-        deleted_count = len(methodologies) - len(new_methodologies)
-        if deleted_count > 0:
-            self.save_methodologies(new_methodologies)
-        return {
-            "success": deleted_count > 0,
-            "deleted_count": deleted_count,
-            "remaining_count": len(new_methodologies),
-        }
+        self._ltm.load()
+        return self._ltm.delete_methodologies_batch(method_ids)
 
     def update_methodology_category(self, method_id: str, category: str):
-        methodologies = self.load_methodologies()
-        for i, method in enumerate(methodologies):
-            if method["method_id"] == method_id:
-                normalized = self.normalize_methodology(method)
-                normalized["category"] = (category or "").strip() or normalized.get("category", "通用/其他")
-                normalized["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                methodologies[i] = normalized
-                self.save_methodologies(methodologies)
-
-                feedback = self._load_category_feedback()
-                event_key = normalized.get("event_key", "")
-                if event_key:
-                    feedback[event_key] = normalized["category"]
-                    self._save_category_feedback(feedback)
-                return normalized
-        return None
+        self._ltm.load()
+        updated = self._ltm.update_methodology_category(method_id, category)
+        if updated:
+            feedback = self._load_category_feedback()
+            event_key = updated.get("event_key", "")
+            if event_key:
+                feedback[event_key] = updated.get("category", "通用/其他")
+                self._save_category_feedback(feedback)
+        return updated
 
     # 根据ID获取方法论
     def get_methodology_by_id(self, method_id):
-        methodologies = self.load_methodologies()
-        for method in methodologies:
-            if method["method_id"] == method_id:
-                return method
-        return None
+        self._ltm.load()
+        return self._ltm.get_methodology_by_id(method_id)
+
+    def rollback_methodology(self, method_id: str, to_version: int):
+        self._ltm.load()
+        return self._ltm.rollback_methodology(method_id, to_version)
+
+    def get_methodology_health_dashboard(self, limit: int = 100):
+        self._ltm.load()
+        return self._ltm.methodology_health_dashboard(limit=limit)
+
+    def get_ab_stats_summary(self):
+        self._ltm.load()
+        stats = self._ltm.ab_stats if isinstance(self._ltm.ab_stats, dict) else {}
+        pairs = stats.get("pairs") if isinstance(stats.get("pairs"), dict) else {}
+        methods = stats.get("methods") if isinstance(stats.get("methods"), dict) else {}
+        return {
+            "pair_count": len(pairs),
+            "method_count": len(methods),
+            "updated_at": stats.get("updated_at", ""),
+        }

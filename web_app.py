@@ -148,6 +148,8 @@ def _finalize_action_execution(
     conversation_id: str,
     request_id: str,
     actions: list[dict],
+    plan_summary: str = "",
+    plan_risk_level: str = "medium",
     thread_task_id: str | None = None,
     *,
     action_screenshots: bool = False,
@@ -159,6 +161,8 @@ def _finalize_action_execution(
         methodology_manager,
         conversation_manager,
         action_screenshots=bool(action_screenshots),
+        plan_summary=str(plan_summary or ""),
+        plan_risk_level=str(plan_risk_level or "medium"),
     )
     execution_sessions_by_conversation[conversation_id] = session_id
     manager.start_execution_session(session_id)
@@ -427,7 +431,8 @@ def process_input():
             pending = pending_action_plans.get(conversation_id, {})
             actions = pending.get("actions") or []
             if _is_confirmation_text(user_input or ""):
-                if manager.requires_double_confirmation(actions):
+                pending_risk_level = str(pending.get("risk_level") or manager.evaluate_action_risk_level(actions))
+                if pending_risk_level == "high":
                     pending["double_confirm_ready"] = True
                     pending_action_plans[conversation_id] = pending
                     msg = "检测到高风险动作。请回复“二次确认”后执行。"
@@ -469,6 +474,8 @@ def process_input():
                         conversation_id,
                         request_id or "",
                         actions,
+                        plan_summary=str(pending.get("summary") or ""),
+                        plan_risk_level=str(pending.get("risk_level") or "medium"),
                         thread_task_id=tid,
                         action_screenshots=action_screenshots,
                     )
@@ -481,6 +488,8 @@ def process_input():
                         conversation_id,
                         request_id or "",
                         actions,
+                        plan_summary=str(pending.get("summary") or ""),
+                        plan_risk_level=str(pending.get("risk_level") or "high"),
                         thread_task_id=tid,
                         action_screenshots=action_screenshots,
                     )
@@ -537,14 +546,17 @@ def process_input():
         if plan.get("mode") == "action" and plan.get("actions"):
             tid = _tid_for_response_non_parse(conversation_id, client_task_id, new_task, conversation_task_bookmark)
             manager.current_task_id = tid
-            plan["requires_double_confirmation"] = manager.requires_double_confirmation(plan.get("actions") or [])
-            needs_user_gate = manager.actions_require_user_gate(plan.get("actions") or [])
-            auto_ok = not plan.get("requires_double_confirmation") and not needs_user_gate
+            plan_risk_level = manager.evaluate_action_risk_level(plan.get("actions") or [])
+            plan["risk_level"] = plan_risk_level
+            plan["requires_double_confirmation"] = plan_risk_level == "high"
+            auto_ok = plan_risk_level == "safe"
             if auto_ok:
                 started_payload = _finalize_action_execution(
                     conversation_id,
                     request_id or "",
                     plan.get("actions") or [],
+                    plan_summary=str(plan.get("summary") or ""),
+                    plan_risk_level=plan_risk_level,
                     thread_task_id=tid,
                     action_screenshots=action_screenshots,
                 )
@@ -554,6 +566,7 @@ def process_input():
             pending_action_plans[conversation_id] = {
                 "actions": plan.get("actions"),
                 "summary": plan.get("summary", ""),
+                "risk_level": plan_risk_level,
                 "created_at": time.time(),
                 "double_confirm_ready": False,
             }
@@ -581,6 +594,7 @@ def process_input():
                 'pending_actions': plan,
                 'needs_confirmation': True,
                 'needs_double_confirmation': bool(plan.get("requires_double_confirmation")),
+                'risk_level': plan_risk_level,
                 'model_trace': getattr(manager, "last_model_trace", {}),
                 'token_usage': _tu,
             })
@@ -791,7 +805,8 @@ def confirm_actions():
 
     force = bool(data.get('force'))
     actions = pending.get("actions") or []
-    if manager.requires_double_confirmation(actions) and not force:
+    risk_level = str(pending.get("risk_level") or manager.evaluate_action_risk_level(actions))
+    if risk_level == "high" and not force:
         pending["double_confirm_ready"] = True
         pending_action_plans[conversation_id] = pending
         return jsonify({
@@ -804,7 +819,13 @@ def confirm_actions():
     pending_action_plans.pop(conversation_id, None)
     btid = (conversation_task_bookmark.get(conversation_id) or "").strip()
     payload = _finalize_action_execution(
-        conversation_id, request_id, actions, thread_task_id=btid or None, action_screenshots=action_screenshots
+        conversation_id,
+        request_id,
+        actions,
+        plan_summary=str(pending.get("summary") or ""),
+        plan_risk_level=risk_level,
+        thread_task_id=btid or None,
+        action_screenshots=action_screenshots,
     )
     payload['success'] = True
     return jsonify(payload)
@@ -823,7 +844,13 @@ def start_execution():
         return jsonify({'success': False, 'message': '缺少 actions'}), 400
     btid = (conversation_task_bookmark.get(conversation_id) or "").strip()
     payload = _finalize_action_execution(
-        conversation_id, request_id, actions, thread_task_id=btid or None, action_screenshots=action_screenshots
+        conversation_id,
+        request_id,
+        actions,
+        plan_summary="manual_start_execution",
+        plan_risk_level=manager.evaluate_action_risk_level(actions),
+        thread_task_id=btid or None,
+        action_screenshots=action_screenshots,
     )
     payload['success'] = True
     return jsonify(payload)
@@ -1038,6 +1065,28 @@ def get_methodology():
     methodology_id = data.get('methodology_id')
     methodology = methodology_manager.get_methodology_by_id(methodology_id)
     return jsonify({'methodology': methodology})
+
+
+@app.route('/api/rollback_methodology', methods=['POST'])
+def rollback_methodology():
+    data = request.json or {}
+    methodology_id = str(data.get('methodology_id') or '').strip()
+    to_version = int(data.get('to_version') or 0)
+    if not methodology_id or to_version <= 0:
+        return jsonify({'success': False, 'message': '缺少 methodology_id 或 to_version'}), 400
+    rolled = methodology_manager.rollback_methodology(methodology_id, to_version)
+    return jsonify({'success': bool(rolled), 'methodology': rolled})
+
+
+@app.route('/api/methodology_health', methods=['GET'])
+def methodology_health():
+    try:
+        limit = int(request.args.get("limit", "100") or "100")
+    except ValueError:
+        limit = 100
+    dashboard = methodology_manager.get_methodology_health_dashboard(limit=limit)
+    summary = methodology_manager.get_ab_stats_summary()
+    return jsonify({"rows": dashboard, "summary": summary, "success": True})
 
 # 获取记忆状态
 @app.route('/api/get_memory_status')

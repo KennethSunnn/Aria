@@ -1,0 +1,22 @@
+[
+  {
+    "name": "browser_search_python",
+    "query": "打开百度，搜索 Python 教程并打开第一个结果",
+    "expected_keywords": ["browser_open", "browser_type", "browser_click"]
+  },
+  {
+    "name": "wechat_send_message",
+    "query": "给张三发微信：明天10点开会",
+    "expected_keywords": ["wechat_send_message"]
+  },
+  {
+    "name": "file_organize_pdf",
+    "query": "把下载目录中的 PDF 移动到 Documents/PDFs",
+    "expected_keywords": ["file_move"]
+  },
+  {
+    "name": "desktop_hotkey_demo",
+    "query": "打开记事本并输入一段文本",
+    "expected_keywords": ["desktop_open_app", "desktop_type"]
+  }
+]
