@@ -2,12 +2,15 @@
 
 ARIA is an LLM-powered Autonomous Recursive Intelligent Agent that understands natural language instructions and automatically executes various tasks, including desktop operations, browser automation, WeChat messaging, file processing, and more.
 
-## Recent Updates (2026-03-30)
+## Recent Updates (2026-03-31)
 
 - Added a clear action risk policy (`safe` / `medium` / `high`) and confirmation behavior.
 - Added methodology health API endpoint: `GET /api/methodology_health`.
 - Added regression benchmark script: `scripts/run_regression_benchmark.py`.
 - Added regression report output path: `data/benchmarks/latest_regression_report.json`.
+- Upgraded Experience Center to **Skills Hub** with recommended skills, inline health signals, and one-click reuse.
+- Added hub APIs for aggregation, draft generation from recent successes, import pre-check, and event metrics.
+- Added benchmark strict gate fields (`strict_pass_rate`, `strict_ok`) and CLI threshold checks.
 
 ## Core Features
 
@@ -17,6 +20,8 @@ ARIA is an LLM-powered Autonomous Recursive Intelligent Agent that understands n
 - 💬 **WeChat Automation**: Supports both desktop client and web version for sending messages
 - 📁 **File Processing**: Automatic file read/write, organization, and Office document parsing
 - 🧠 **Methodology Learning**: Learns from successful tasks and builds a solution repository
+- 🧩 **Skills Hub**: Turns methodologies into reusable skill cards with recommendation and risk hints
+- 🧪 **Harness Feedback Loop**: Uses benchmark/health signals to drive recommendation confidence
 - 🔍 **OCR Screen Recognition**: Automatically recognizes screen content for intelligent operations
 - 📊 **Multimodal Support**: Image upload and understanding (requires vision-capable models)
 
@@ -121,8 +126,12 @@ Aria/
 │       └── zh.json
 │
 └── data/                    # Data directory (generated at runtime)
-    └── methodology/         # Methodology library storage
-        └── methodologies.json
+    ├── methodology/         # Methodology library storage
+    │   ├── methodologies.json
+    │   └── ab_stats.json
+    ├── benchmarks/
+    │   └── latest_regression_report.json
+    └── experience_center_metrics.json
 ```
 
 ## Core Components
@@ -219,7 +228,7 @@ The system automatically selects the effort level based on task type, or you can
 - `POST /api/create_methodology`: Create methodology
 - `POST /api/import_methodologies`: Import methodologies with pre-check
 - `POST /api/update_methodology_category`: Update category
-- `DELETE /api/delete_methodology`: Delete single methodology
+- `POST /api/delete_methodology`: Delete single methodology
 - `POST /api/delete_methodologies_batch`: Batch delete
 - `GET /api/methodology_health`: Methodology health dashboard (quality/AB stats)
 - `GET /api/experience_hub_data`: Skills Hub aggregate data (recommended skills / alerts / regression snapshot)
@@ -316,6 +325,19 @@ Report is written to `data/benchmarks/latest_regression_report.json`.
   - `data/experience_center_metrics.json`
   - tracks events such as tab open, reuse click, draft save, import, rollback
 
+### Quick Verification Checklist
+
+```bash
+# 1) Start web app
+python web_app.py
+
+# 2) Check hub aggregate API
+curl http://localhost:5000/api/experience_hub_data
+
+# 3) Run benchmark and enforce gate
+python scripts/run_regression_benchmark.py --min-match-rate 0.6 --min-strict-pass-rate 0.5
+```
+
 ## Important Notes
 
 1. **API Key Security**: Do not commit `.env` file to version control
@@ -351,4 +373,4 @@ For questions or suggestions, please contact via:
 
 ---
 
-**Last Updated**: 2026-03-30
+**Last Updated**: 2026-03-31
