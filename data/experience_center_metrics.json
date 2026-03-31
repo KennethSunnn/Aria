@@ -1,7 +1,7 @@
 {
   "counters": {
     "smoke": 1,
-    "experience_tab_open": 2,
+    "experience_tab_open": 9,
     "method_detail_open": 2
   },
   "recent_events": [
@@ -34,7 +34,49 @@
       "method_id": "a20998a3-a9b9-436b-95d9-07be42c84225",
       "conversation_id": "d6f73969-8fea-4b3a-80ab-7d4305c5196f",
       "at": "2026-03-31 10:47:00"
+    },
+    {
+      "event": "experience_tab_open",
+      "method_id": "",
+      "conversation_id": "d6f73969-8fea-4b3a-80ab-7d4305c5196f",
+      "at": "2026-03-31 11:18:38"
+    },
+    {
+      "event": "experience_tab_open",
+      "method_id": "",
+      "conversation_id": "a82b52bd-c367-47e6-b0af-622167c654b5",
+      "at": "2026-03-31 11:40:11"
+    },
+    {
+      "event": "experience_tab_open",
+      "method_id": "",
+      "conversation_id": "a82b52bd-c367-47e6-b0af-622167c654b5",
+      "at": "2026-03-31 11:41:49"
+    },
+    {
+      "event": "experience_tab_open",
+      "method_id": "",
+      "conversation_id": "a82b52bd-c367-47e6-b0af-622167c654b5",
+      "at": "2026-03-31 11:41:51"
+    },
+    {
+      "event": "experience_tab_open",
+      "method_id": "",
+      "conversation_id": "a82b52bd-c367-47e6-b0af-622167c654b5",
+      "at": "2026-03-31 11:41:58"
+    },
+    {
+      "event": "experience_tab_open",
+      "method_id": "",
+      "conversation_id": "a82b52bd-c367-47e6-b0af-622167c654b5",
+      "at": "2026-03-31 11:42:00"
+    },
+    {
+      "event": "experience_tab_open",
+      "method_id": "",
+      "conversation_id": "a82b52bd-c367-47e6-b0af-622167c654b5",
+      "at": "2026-03-31 11:44:13"
     }
   ],
-  "updated_at": "2026-03-31 10:47:00"
+  "updated_at": "2026-03-31 11:44:13"
 }

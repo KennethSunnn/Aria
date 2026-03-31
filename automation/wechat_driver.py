@@ -705,11 +705,20 @@ class WeChatDesktopDriver:
                 except Exception:
                     return False, "wechat_search_candidate_click_failed:无法点击唯一候选，已阻断发送以避免误发"
             else:
-                # 第二阶段：尝试从搜索面板中直接定位并点击真实联系人（包括在微搜条目下方的群聊/联系人）。
-                ok_click, err_click = self._try_click_entry_from_search_panel(
-                    contact_name,
-                    contact_hint=hint,
-                )
+                # 若 UIA 仅能读到窗口标题（如 Weixin）而读不到列表项，先用键盘打开首个搜索结果（与网页版 Enter 兜底一致）。
+                ok_kb, err_kb = self._try_activate_search_result_by_keyboard(contact_name)
+                if ok_kb:
+                    pass
+                else:
+                    logger.debug("wechat keyboard search fallback skipped/failed: %s", err_kb)
+                if not ok_kb:
+                    # 第二阶段：尝试从搜索面板中直接定位并点击真实联系人（包括在微搜条目下方的群聊/联系人）。
+                    ok_click, err_click = self._try_click_entry_from_search_panel(
+                        contact_name,
+                        contact_hint=hint,
+                    )
+                else:
+                    ok_click, err_click = True, ""
                 if not ok_click:
                     panel_texts = self._read_desktop_search_panel_texts()
                     # 微搜劫持分支若已在会话列表或 OCR 中点到目标，则不再重复走下方兜底（否则会误报失败且 ocr=[]）。
@@ -775,8 +784,12 @@ class WeChatDesktopDriver:
                                     else:
                                         if str(err_ocr).startswith("wechat_need_disambiguation:"):
                                             return False, err_ocr
-                                        # 末级兜底：微搜场景下按左侧结果行位点击探测
-                                        ok_probe, err_probe = self._try_click_left_result_rows_probe(contact_name)
+                                        # OCR 依赖缺失时禁止进入行位盲探，避免搜索后乱点。
+                                        if self._wechat_ocr_error_is_dependency_missing(err_ocr) or self._wechat_ocr_error_is_dependency_missing(err_drop):
+                                            ok_probe, err_probe = False, "wechat_probe_skipped:ocr_dependency_missing"
+                                        else:
+                                            # 末级兜底：微搜场景下按左侧结果行位点击探测
+                                            ok_probe, err_probe = self._try_click_left_result_rows_probe(contact_name)
                                         if ok_probe:
                                             pass
                                         else:
@@ -965,7 +978,7 @@ class WeChatDesktopDriver:
                 name_txt = self._extract_candidate_name(txt)
                 if not name_txt:
                     continue
-                if txt in ("微信", "企业微信"):
+                if txt in ("微信", "企业微信") or name_txt in ("Weixin", "WeChat", "微信", "企业微信"):
                     continue
                 if name_txt not in seen:
                     seen.add(name_txt)
@@ -992,7 +1005,7 @@ class WeChatDesktopDriver:
                 name_txt = self._extract_candidate_name(txt)
                 if not name_txt:
                     continue
-                if name_txt in ("微信", "企业微信"):
+                if name_txt in ("微信", "企业微信", "Weixin", "WeChat"):
                     continue
                 if name_txt not in seen:
                     seen.add(name_txt)
@@ -1035,6 +1048,8 @@ class WeChatDesktopDriver:
                 if not name_txt:
                     continue
                 if self._is_probably_non_contact_result(name_txt):
+                    continue
+                if name_txt in ("Weixin", "WeChat"):
                     continue
                 norm = self._normalize_for_match(name_txt)
                 if norm in seen:
@@ -1198,6 +1213,17 @@ class WeChatDesktopDriver:
             or "not in your path" in s
             or "not in your" in s
             or "could not be found" in s
+        )
+
+    @staticmethod
+    def _wechat_ocr_error_is_dependency_missing(err: str | None) -> bool:
+        if not err:
+            return False
+        s = str(err).lower()
+        return (
+            "missing_dependency" in s
+            or "no module named" in s
+            or "wechat_ocr_unavailable" in s
         )
 
     def _wechat_contact_name_is_latin_letters(self, name: str) -> bool:
@@ -1611,6 +1637,48 @@ class WeChatDesktopDriver:
         time.sleep(0.35)
         return True, ""
 
+    def _try_activate_search_result_by_keyboard(self, contact_name: str) -> tuple[bool, str]:
+        """
+        部分微信版本搜索列表对 UIA 不可见（只读到窗口标题 Weixin 等），OCR 又未安装时无法点选。
+        此时用方向键进入结果列表并 Enter 打开首条，再用顶栏校验防误发；失败则重置搜索后试下一套按键。
+        """
+        expected = self._normalize_for_match(contact_name)
+        if not expected:
+            return False, "wechat_keyboard_search_missing_contact"
+
+        sequences = ("{DOWN}{ENTER}", "{ENTER}", "{DOWN}{DOWN}{ENTER}")
+        last_err = "wechat_keyboard_search_no_match"
+        for i, seq in enumerate(sequences):
+            if i > 0:
+                ok_rs, err_rs = self._reset_search_for_probe(contact_name)
+                if not ok_rs:
+                    return False, f"wechat_keyboard_search_reset_failed:{err_rs}"
+            ok, err = self._send_keys_to_wechat(
+                seq,
+                pause=0.06,
+                allow_mouse_click=True,
+                use_alt_trick=True,
+            )
+            if not ok:
+                return False, f"wechat_keyboard_search_send_failed:{err}"
+            time.sleep(0.55)
+            ok_title, err_title = self._validate_desktop_chat_title_after_search(expected)
+            if ok_title:
+                return True, ""
+            last_err = err_title or last_err
+            if err_title and "non_contact" in str(err_title):
+                try:
+                    self._send_keys_to_wechat(
+                        "{ESC}",
+                        pause=0.06,
+                        allow_mouse_click=True,
+                        use_alt_trick=True,
+                    )
+                    time.sleep(0.22)
+                except Exception:
+                    pass
+        return False, str(last_err)
+
     def _probe_row_label_matches_expected(self, rel_x: int, rel_y: int, expected_name: str) -> bool:
         """
         在左侧已点击行附近做小区域 OCR，判断是否包含目标名称。
@@ -1688,7 +1756,7 @@ class WeChatDesktopDriver:
                 txt = self._control_text(ctrl)
                 if not txt or len(txt) > 80:
                     continue
-                if txt in ("微信", "企业微信"):
+                if txt in ("微信", "企业微信", "Weixin", "WeChat"):
                     continue
                 if txt not in seen:
                     seen.add(txt)

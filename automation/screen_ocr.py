@@ -8,7 +8,7 @@
 - 支持中英文混合
 
 依赖：
-- pip install pyautogui pytesseract Pillow
+- pip install pytesseract Pillow（可选：pyautogui，用于更稳定的点击/输入模拟）
 - Windows 需安装 Tesseract OCR：https://github.com/UB-Mannheim/tesseract/wiki
 """
 
@@ -42,7 +42,6 @@ def _load_project_dotenv() -> None:
 def _check_dependencies() -> tuple[bool, str]:
     """检查依赖是否已安装"""
     try:
-        import pyautogui  # noqa: F401
         import pytesseract  # noqa: F401
         from PIL import Image  # noqa: F401
         return True, ""
@@ -79,9 +78,32 @@ def capture_screen(region: tuple[int, int, int, int] | None = None):
     Returns:
         PIL.Image 截图对象
     """
-    import pyautogui
-    screenshot = pyautogui.screenshot(region=region)
-    return screenshot
+    # 优先用 pyautogui（兼容历史行为）；缺失时回退到 PIL.ImageGrab，
+    # 避免 OCR 因 pyautogui 缺失而完全不可用。
+    try:
+        import pyautogui
+
+        screenshot = pyautogui.screenshot(region=region)
+        return screenshot
+    except Exception as pyauto_err:
+        try:
+            from PIL import ImageGrab
+        except Exception as pil_err:
+            raise RuntimeError(
+                f"screen_capture_failed:pyautogui={pyauto_err};imagegrab_import={pil_err}"
+            ) from pil_err
+
+        bbox = None
+        if region is not None:
+            left, top, width, height = [int(x) for x in region]
+            bbox = (left, top, left + max(1, width), top + max(1, height))
+        try:
+            # all_screens 在 Windows 多屏下更稳妥
+            return ImageGrab.grab(bbox=bbox, all_screens=True)
+        except Exception as grab_err:
+            raise RuntimeError(
+                f"screen_capture_failed:pyautogui={pyauto_err};imagegrab_grab={grab_err}"
+            ) from grab_err
 
 
 def ocr_screen(
@@ -378,9 +400,9 @@ def get_capability_summary() -> str:
     tess_ok, _ = _check_tesseract()
     
     if not deps_ok:
-        return "【屏幕 OCR】未配置（需安装 pyautogui/pytesseract/Pillow）。"
+        return "【屏幕 OCR】未配置（需安装 pytesseract/Pillow；可选 pyautogui）。"
     
     if not tess_ok:
-        return "【屏幕 OCR】pyautogui 已安装，但 Tesseract OCR 未检测到。请安装 Tesseract 并添加到 PATH（Windows: https://github.com/UB-Mannheim/tesseract/wiki）。"
+        return "【屏幕 OCR】Tesseract OCR 未检测到。请安装 Tesseract 并添加到 PATH（Windows: https://github.com/UB-Mannheim/tesseract/wiki）。"
     
     return "【屏幕 OCR】已配置：screen_ocr 识别屏幕文字，screen_find_text 查找文字位置，screen_click_text 点击文字。支持中英文混合识别。"
