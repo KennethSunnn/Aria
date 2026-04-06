@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -116,6 +117,36 @@ def _run_autonomy_loop_regression(manager: Any) -> list[dict[str, Any]]:
             expect_state="success",
         ),
         _simulate_case(
+            name="browser_open_js_error_then_success",
+            action={
+                "type": "browser_open",
+                "target": "https://example.com",
+                "params": {"url": "https://example.com"},
+                "filters": {},
+                "risk": "low",
+            },
+            outputs=[
+                {"success": False, "error_code": "js_error", "retryable": True, "stderr": "js_error"},
+                {"success": True, "stdout": "opened"},
+            ],
+            expect_state="success",
+        ),
+        _simulate_case(
+            name="desktop_type_uia_busy_then_success",
+            action={
+                "type": "desktop_type",
+                "target": "",
+                "params": {"text": "hello"},
+                "filters": {},
+                "risk": "low",
+            },
+            outputs=[
+                {"success": False, "error_code": "uia_busy", "retryable": True, "stderr": "busy"},
+                {"success": True, "stdout": "typed"},
+            ],
+            expect_state="success",
+        ),
+        _simulate_case(
             name="verify_failed_then_manual_takeover",
             action={
                 "type": "file_write",
@@ -132,14 +163,15 @@ def _run_autonomy_loop_regression(manager: Any) -> list[dict[str, Any]]:
             expect_manual_takeover=True,
         ),
         _simulate_case(
-            name="retry_exhausted_recoverable",
+            name="retry_exhausted_uia_busy_then_failed",
             action={"type": "desktop_hotkey", "target": "ctrl+s", "params": {}, "filters": {}, "risk": "low"},
             outputs=[
                 {"success": False, "error_code": "uia_busy", "retryable": True, "stderr": "busy"},
                 {"success": False, "error_code": "uia_busy", "retryable": True, "stderr": "busy"},
             ],
-            expect_state="recoverable_error",
-            expect_manual_takeover=True,
+            # max_action_retries=1：第二次仍失败则末行 outcome_state 为 failed（非 recoverable_error）
+            expect_state="failed",
+            expect_manual_takeover=False,
         ),
         _simulate_case(
             name="cancelled_inflight",
@@ -153,7 +185,6 @@ def _run_autonomy_loop_regression(manager: Any) -> list[dict[str, Any]]:
 
 def _run_computer_use_regression() -> list[dict[str, Any]]:
     """纯逻辑：坐标与白名单策略（不移动鼠标）。"""
-    import os
     from automation import computer_use
 
     rows: list[dict[str, Any]] = []
@@ -191,7 +222,7 @@ def main() -> None:
     sys.path.insert(0, str(root))
     from aria_manager import ARIAManager
 
-    cases_path = root / "benchmarks" / "regression_tasks.json"
+    cases_path = root / "data" / "benchmarks" / "regression_tasks.json"
     if not cases_path.is_file():
         raise SystemExit(f"missing benchmark file: {cases_path}")
 

@@ -113,6 +113,38 @@ class AutoMemoryManager:
         except OSError:
             return ""
 
+    @staticmethod
+    def _task_keywords_from_text(task_text: str) -> list[str]:
+        """从用户任务句抽取关键词，供 load_into_stm_with_context 排序（轻量、无第三方依赖）。"""
+        s = (task_text or "").strip()
+        if not s:
+            return []
+        seen: dict[str, None] = {}
+        for w in re.findall(r"[a-z0-9_]{2,}", s.lower()):
+            if w not in seen:
+                seen[w] = None
+        cjk = [ch for ch in s if "\u4e00" <= ch <= "\u9fff"]
+        for n in (2, 3):
+            for i in range(0, max(0, len(cjk) - n + 1)):
+                gram = "".join(cjk[i : i + n])
+                if gram not in seen:
+                    seen[gram] = None
+        return list(seen.keys())[:24]
+
+    def get_system_prompt_fragment(self, task_text: str = "") -> str:
+        """
+        供 TAOR / 系统提示拼接：注入跨会话记忆（MEMORY.md 或按任务关键词排序的索引）。
+        禁用时或无可读内容时返回空字符串。
+        """
+        if not self._is_enabled():
+            return ""
+        kws = self._task_keywords_from_text(task_text)
+        has_entries = _ENTRIES_DIR.exists() and any(_ENTRIES_DIR.glob("*.md"))
+        body = (self.load_into_stm_with_context(kws) if has_entries else self.load_into_stm()).strip()
+        if not body:
+            return ""
+        return f"\n\n【ARIA 持续记忆】\n{body}\n"
+
     # ------------------------------------------------------------------ #
     # 任务结束：提取并持久化模式                                             #
     # ------------------------------------------------------------------ #
@@ -323,6 +355,93 @@ class AutoMemoryManager:
             lines.append(f"- [{act.get('type', '?')}] success={success}")
         return "\n".join(lines)
 
+    # ------------------------------------------------------------------ #
+    # 相关性评分与记忆衰减                                                    #
+    # ------------------------------------------------------------------ #
+
+    def score_relevance(self, entry: "MemoryEntry", current_task_keywords: list[str]) -> float:
+        """
+        基于关键词重叠给记忆条目打分（0.0 ~ 1.0）。
+        用于 load_into_stm 时按相关性排序。
+        """
+        if not current_task_keywords:
+            return 0.5  # 无关键词时中性分
+        text = (entry.name + " " + entry.description + " " + entry.body).lower()
+        hits = sum(1 for kw in current_task_keywords if kw.lower() in text)
+        return min(1.0, hits / max(1, len(current_task_keywords)))
+
+    def decay_old_entries(self, days: int = 90) -> int:
+        """
+        清理超过 days 天未更新的低分条目（description 极短或 body 极短）。
+        返回删除的条目数。
+        """
+        if not _ENTRIES_DIR.exists():
+            return 0
+        cutoff = time.time() - days * 86400
+        deleted = 0
+        for path in list(_ENTRIES_DIR.glob("*.md")):
+            e = MemoryEntry.from_file(path)
+            if e is None:
+                continue
+            # 解析 updated_at
+            try:
+                updated_ts = time.mktime(time.strptime(e.updated_at, "%Y-%m-%d %H:%M:%S"))
+            except (ValueError, OverflowError):
+                continue
+            if updated_ts < cutoff and len(e.body.strip()) < 20:
+                try:
+                    path.unlink()
+                    deleted += 1
+                except OSError:
+                    pass
+        if deleted:
+            self._rebuild_index()
+        return deleted
+
+    def load_into_stm_with_context(self, task_keywords: list[str]) -> str:
+        """
+        读取 memory/MEMORY.md，按与当前任务的相关性排序后返回。
+        比 load_into_stm() 更智能，适合 TAOR 系统提示注入。
+        """
+        if not _ENTRIES_DIR.exists():
+            return self.load_into_stm()
+
+        entries: list[MemoryEntry] = []
+        for path in sorted(_ENTRIES_DIR.glob("*.md")):
+            e = MemoryEntry.from_file(path)
+            if e:
+                entries.append(e)
+
+        if not entries:
+            return self.load_into_stm()
+
+        # 按相关性排序
+        scored = sorted(
+            entries,
+            key=lambda e: self.score_relevance(e, task_keywords),
+            reverse=True,
+        )
+
+        lines: list[str] = ["# ARIA Memory Index (按相关性排序)", ""]
+        by_type: dict[str, list[MemoryEntry]] = {}
+        for e in scored:
+            by_type.setdefault(e.type_, []).append(e)
+
+        for type_name in ("user_preference", "task_pattern", "feedback"):
+            group = by_type.get(type_name, [])
+            if not group:
+                continue
+            lines.append(f"## {type_name}")
+            for e in group:
+                rel_path = f"entries/{e.name}.md"
+                lines.append(f"- [{e.name}]({rel_path}): {e.description}")
+            lines.append("")
+
+        result = "\n".join(lines)
+        if len(result.splitlines()) > _MAX_INDEX_LINES:
+            result = "\n".join(result.splitlines()[:_MAX_INDEX_LINES]) + "\n... (truncated)"
+        return result.strip()
+
     @staticmethod
     def _is_enabled() -> bool:
-        return os.getenv(_ENABLED_ENV, "0").strip().lower() in ("1", "true", "yes")
+        return os.getenv(_ENABLED_ENV, "1").strip().lower() in ("1", "true", "yes")

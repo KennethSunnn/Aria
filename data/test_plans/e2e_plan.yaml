@@ -1,0 +1,23 @@
+# Layer 3 — E2E / 集成（需真实浏览器/桌面环境；默认不纳入 CI）
+# 占位计划：与 main_plan 的 tier=full 区分，供本地或夜间真机流水线扩展。
+#
+# 运行示例（当前无 suite，仅作文档与路径约定）：
+#   python scripts/run_test_plan.py --plan e2e_plan.yaml --tier full
+
+plan_id: e2e_plan_v1
+description: E2E / 集成测试占位（Playwright 真浏览器、Windows UIA 真注入等）
+
+schedule: "0 3 * * *"
+
+min_suite_pass_rate: 0.85
+
+suites:
+  - id: e2e_placeholder
+    description: "待扩展：真机 E2E（需 ARIA_PLAYWRIGHT=1、Windows 等）"
+    tier: full
+    priority: 99
+    type: pytest
+    paths:
+      - tests/test_computer_use.py
+    marks: ""
+    timeout_seconds: 600

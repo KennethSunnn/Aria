@@ -36,3 +36,6 @@
 - Run regression benchmark before merging behavior changes.
 - Keep docs, prompts, and constraints aligned with actual runtime behavior.
 - Use weekly housekeeping to detect drift in docs/rules/quality.
+
+## Action registry drift
+- **Failure mode:** planner suggests tools that are blocked at runtime or skip safety metadata. When adding an `action` type, update `ALLOWED_ACTION_TYPES`, `USER_GATE_ACTION_TYPES` / `HIGH_RISK_ACTION_TYPES` if applicable, `action_registry`, and any permission read-only sets in `runtime/permissions.py`; extend `tests/test_action_registry_consistency.py` if you introduce intentional exceptions.

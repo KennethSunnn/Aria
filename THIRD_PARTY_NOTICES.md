@@ -5,7 +5,8 @@ This project includes or derives configuration/personality assets from third-par
 ## agency-agents
 
 - Project: [msitarzewski/agency-agents](https://github.com/msitarzewski/agency-agents)
-- Upstream path used in this repository: `agency-agents-main/agency-agents-main`
+- **Preferred local path** (not committed; clone or extract here): `third_party/agency-agents/` — use the same nested layout as upstream (for example `third_party/agency-agents/agency-agents-main/`).
+- **Legacy path** (still supported if you already have it): `agency-agents-main/agency-agents-main` at the repository root.
 - License: MIT
 - Upstream copyright notice:
   - `Copyright (c) 2025 AgentLand Contributors`
@@ -17,7 +18,8 @@ This project includes or derives configuration/personality assets from third-par
 
 ### Compliance notes
 
-- The upstream MIT license text is preserved at:
+- The upstream MIT license text is preserved in your local checkout, for example:
+  - `third_party/agency-agents/agency-agents-main/LICENSE`, or
   - `agency-agents-main/agency-agents-main/LICENSE`
 - Per MIT terms, the upstream copyright and permission notice are retained.
 

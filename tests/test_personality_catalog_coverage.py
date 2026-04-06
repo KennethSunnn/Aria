@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from aria_manager import ARIAManager
 
 
@@ -16,7 +18,10 @@ def test_personality_map_has_full_14_departments_and_178_agents() -> None:
 def test_personality_catalog_candidates_cover_full_pool_for_exec_agents() -> None:
     manager = ARIAManager()
     root = manager._resolve_agency_agents_root()
-    assert root is not None and root.is_dir()
+    if root is None or not root.is_dir():
+        pytest.skip(
+            "agency-agents upstream assets not present (clone third_party/agency-agents per THIRD_PARTY_NOTICES.md)"
+        )
     for agent_type in ("TextExecAgent", "VisionExecAgent", "SpeechExecAgent"):
         rows = manager.personality_catalog.get(agent_type) or []
         assert len(rows) == 178

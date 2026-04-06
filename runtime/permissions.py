@@ -23,7 +23,21 @@ class PermissionLevel(str, Enum):
 
 _ENV_KEY = "ARIA_PERMISSION_LEVEL"
 
-# 只读操作集合（任何权限级别均可执行，无需确认）
+# 文档/TAOR「低风险探测」核心集合（须为 ALLOWED_ACTION_TYPES 子集，由测试保证）
+SAFE_ACTION_TYPES: FrozenSet[str] = frozenset(
+    {
+        "web_understand",
+        "web_fetch",
+        "browser_find",
+        "browser_scroll",
+        "browser_wait",
+        "computer_screenshot",
+        "screen_ocr",
+        "screen_find_text",
+    }
+)
+
+# 只读操作集合（非 plan 模式下：任何权限级别均可执行，无需确认）
 _READ_ONLY_TYPES: FrozenSet[str] = frozenset(
     {
         "browser_screenshot",
@@ -36,6 +50,9 @@ _READ_ONLY_TYPES: FrozenSet[str] = frozenset(
         "shell_query",
     }
 )
+
+# plan 模式允许的动作 = 只读 ∪ SAFE（TAOR / allows_under_plan_mode 单一真源）
+PLAN_MODE_ALLOWED_TYPES: FrozenSet[str] = _READ_ONLY_TYPES | SAFE_ACTION_TYPES
 
 # shell 类操作（写副作用风险高）
 _SHELL_TYPES: FrozenSet[str] = frozenset({"shell_run", "shell_exec"})
@@ -84,6 +101,7 @@ _INTERACTION_TYPES: FrozenSet[str] = frozenset(
         "computer_scroll",
         "computer_move",
         "computer_wait",
+        "window_activate",
     }
 )
 
@@ -126,13 +144,13 @@ class PermissionModel:
         if self.level == PermissionLevel.BYPASS:
             return False
 
+        # PLAN 模式：仅 PLAN_MODE_ALLOWED_TYPES 可免确认，其余一律需确认/拦截
+        if self.level == PermissionLevel.PLAN:
+            return atype not in PLAN_MODE_ALLOWED_TYPES
+
         # 只读操作：任何级别均不需要确认
         if atype in _READ_ONLY_TYPES:
             return False
-
-        # PLAN 模式：除只读外，一切都需确认（实际上应直接拒绝执行）
-        if self.level == PermissionLevel.PLAN:
-            return True
 
         # DEFAULT 模式：非只读一律询问
         if self.level == PermissionLevel.DEFAULT:
@@ -154,6 +172,11 @@ class PermissionModel:
     def is_readonly_only(self) -> bool:
         """PLAN 模式：不允许任何写副作用操作。"""
         return self.level == PermissionLevel.PLAN
+
+    def allows_under_plan_mode(self, action_type: str) -> bool:
+        """PLAN 级别下允许的动作与 PLAN_MODE_ALLOWED_TYPES 一致（见模块级常量）。"""
+        atype = (action_type or "").strip().lower()
+        return atype in PLAN_MODE_ALLOWED_TYPES
 
     def allow_shell(self) -> bool:
         """是否允许在无提示情况下执行 shell 命令。"""

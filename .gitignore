@@ -28,6 +28,7 @@ id_ed25519
 
 # IDE / OS
 .cursor/
+.claude/
 .idea/
 .vscode/
 *.swp
@@ -37,9 +38,13 @@ Thumbs.db
 # Accidental copies of user Desktop under repo root (e.g. drag-dropped folder)
 桌面/
 
+# Mis-redirected shell/pip output (e.g. `>=2.0.0` creating a file named `=2.0.0`)
+/=*.0
+
 # Third-party downloaded repos (not dependencies)
 DeepSeek-OCR-2-main/
 agency-agents-main/
+third_party/agency-agents/
 
 # Test cache
 .pytest_cache/

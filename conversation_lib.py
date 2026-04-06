@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 import time
 import uuid
 from typing import Any
@@ -8,6 +9,7 @@ from typing import Any
 class ConversationLibrary:
     def __init__(self, file_path: str = "data/conversations/conversations.json"):
         self.file_path = file_path
+        self._file_lock = threading.RLock()
         os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
         if not os.path.exists(self.file_path):
             with open(self.file_path, "w", encoding="utf-8") as f:
@@ -58,99 +60,106 @@ class ConversationLibrary:
             "messages": [],
             "workflow_events": [],
         }
-        conversations = self._load()
-        conversations.append(conversation)
-        self._save(conversations)
+        with self._file_lock:
+            conversations = self._load()
+            conversations.append(conversation)
+            self._save(conversations)
         return conversation
 
     def list_conversations(self, archived: bool | None = None) -> list[dict[str, Any]]:
-        conversations = self._load()
-        if archived is True:
-            conversations = [c for c in conversations if bool(c.get("archived", False))]
-        else:
-            # None（默认）与 False：侧边栏仅展示未归档
-            conversations = [c for c in conversations if not bool(c.get("archived", False))]
-        conversations.sort(key=lambda c: c.get("updated_at", 0), reverse=True)
-        return [
-            {
-                "conversation_id": c.get("conversation_id"),
-                "title": c.get("title", "新会话"),
-                "archived": bool(c.get("archived", False)),
-                "status": c.get("status", "active"),
-                "created_at": c.get("created_at", 0),
-                "updated_at": c.get("updated_at", 0),
-                "last_message": c.get("last_message", ""),
-                "message_count": len(c.get("messages", [])),
-            }
-            for c in conversations
-        ]
+        with self._file_lock:
+            conversations = self._load()
+            if archived is True:
+                conversations = [c for c in conversations if bool(c.get("archived", False))]
+            else:
+                # None（默认）与 False：侧边栏仅展示未归档
+                conversations = [c for c in conversations if not bool(c.get("archived", False))]
+            conversations.sort(key=lambda c: c.get("updated_at", 0), reverse=True)
+            return [
+                {
+                    "conversation_id": c.get("conversation_id"),
+                    "title": c.get("title", "新会话"),
+                    "archived": bool(c.get("archived", False)),
+                    "status": c.get("status", "active"),
+                    "created_at": c.get("created_at", 0),
+                    "updated_at": c.get("updated_at", 0),
+                    "last_message": c.get("last_message", ""),
+                    "message_count": len(c.get("messages", [])),
+                }
+                for c in conversations
+            ]
 
     def get_conversation(self, conversation_id: str) -> dict[str, Any] | None:
-        conversations = self._load()
-        for c in conversations:
-            if c.get("conversation_id") == conversation_id:
-                return c
+        with self._file_lock:
+            conversations = self._load()
+            for c in conversations:
+                if c.get("conversation_id") == conversation_id:
+                    return c
         return None
 
     def append_message(self, conversation_id: str, role: str, content: str, meta: dict[str, Any] | None = None) -> bool:
-        conversations = self._load()
         now = time.time()
-        for c in conversations:
-            if c.get("conversation_id") == conversation_id:
-                c.setdefault("messages", []).append(
-                    {
-                        "message_id": str(uuid.uuid4()),
-                        "role": role,
-                        "content": content,
-                        "meta": meta or {},
-                        "timestamp": now,
-                    }
-                )
-                if role == "user":
-                    current_title = str(c.get("title", "") or "").strip()
-                    if (
-                        not current_title
-                        or current_title == "新会话"
-                        or current_title.startswith("新会话 ")
-                        or self._is_small_talk(current_title)
-                    ) and not self._is_small_talk(content):
-                        c["title"] = self._summary(content)
-                c["last_message"] = self._summary(content)
-                c["updated_at"] = now
-                self._save(conversations)
-                return True
+        with self._file_lock:
+            conversations = self._load()
+            for c in conversations:
+                if c.get("conversation_id") == conversation_id:
+                    c.setdefault("messages", []).append(
+                        {
+                            "message_id": str(uuid.uuid4()),
+                            "role": role,
+                            "content": content,
+                            "meta": meta or {},
+                            "timestamp": now,
+                        }
+                    )
+                    if role == "user":
+                        current_title = str(c.get("title", "") or "").strip()
+                        if (
+                            not current_title
+                            or current_title == "新会话"
+                            or current_title.startswith("新会话 ")
+                            or self._is_small_talk(current_title)
+                        ) and not self._is_small_talk(content):
+                            c["title"] = self._summary(content)
+                    c["last_message"] = self._summary(content)
+                    c["updated_at"] = now
+                    self._save(conversations)
+                    return True
         return False
 
     def set_archived(self, conversation_id: str, archived: bool) -> bool:
-        conversations = self._load()
         now = time.time()
-        for c in conversations:
-            if c.get("conversation_id") == conversation_id:
-                c["archived"] = bool(archived)
-                c["status"] = "archived" if archived else "active"
-                c["updated_at"] = now
-                self._save(conversations)
-                return True
+        with self._file_lock:
+            conversations = self._load()
+            for c in conversations:
+                if c.get("conversation_id") == conversation_id:
+                    c["archived"] = bool(archived)
+                    c["status"] = "archived" if archived else "active"
+                    c["updated_at"] = now
+                    self._save(conversations)
+                    return True
         return False
 
     def delete_conversation(self, conversation_id: str) -> bool:
-        conversations = self._load()
-        before = len(conversations)
-        conversations = [c for c in conversations if c.get("conversation_id") != conversation_id]
-        if len(conversations) < before:
-            self._save(conversations)
-            return True
+        with self._file_lock:
+            conversations = self._load()
+            before = len(conversations)
+            conversations = [c for c in conversations if c.get("conversation_id") != conversation_id]
+            if len(conversations) < before:
+                self._save(conversations)
+                return True
         return False
 
     def replace_workflow_events(self, conversation_id: str, events: list[dict[str, Any]]) -> bool:
-        conversations = self._load()
         now = time.time()
-        for c in conversations:
-            if c.get("conversation_id") == conversation_id:
-                c["workflow_events"] = events
-                c["updated_at"] = now
-                self._save(conversations)
-                return True
+        with self._file_lock:
+            conversations = self._load()
+            for c in conversations:
+                if c.get("conversation_id") == conversation_id:
+                    c["workflow_events"] = events
+                    c["updated_at"] = now
+                    self._save(conversations)
+                    return True
         return False
 
     def format_dialogue_context_for_prompt(
@@ -191,7 +200,14 @@ class ConversationLibrary:
                     raw = (raw + " " if raw else "") + hint
             if not raw:
                 continue
-            if len(raw) > max_chars_per_message:
+            if role == "assistant":
+                # 激进截断：assistant 的长回复（执行摘要、ReAct 轨迹）携带旧任务目标信息，
+                # 若完整注入会导致模型将历史任务目标误认为当前任务（任务目标污染）。
+                # 只保留前 200 字，足够帮助模型理解指代，同时阻断旧目标传播。
+                _assistant_cap = 200
+                if len(raw) > _assistant_cap:
+                    raw = raw[:_assistant_cap] + "\n... [助手回复已截断]"
+            elif len(raw) > max_chars_per_message:
                 raw = raw[: max_chars_per_message - 20] + "\n... [已截断]"
             label = "User" if role == "user" else "Assistant"
             block = f"{label}: {raw}"

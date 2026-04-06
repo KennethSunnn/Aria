@@ -1,471 +1,187 @@
 # ARIA - Autonomous Recursive Intelligent Agent
 
-ARIA is an LLM-powered Autonomous Recursive Intelligent Agent that understands natural language instructions and automatically executes various tasks, including desktop operations, browser automation, messaging-channel delivery, file processing, and more.
+ARIA 是一个基于 LLM 的自主智能代理系统，使用 Python + Flask 构建，支持桌面、浏览器、文件、Shell 等多种自动化操作。
 
-## Recent Updates (2026-04-03)
-
-- Added **Xiaohongshu (RED) Automation** (`automation/xiaohongshu_driver.py`): Publish image-text posts via web creator center using Playwright; supports title, content, cover image, and topic tags.
-- Added **DeepSeek OCR Adapter** (`automation/deepseek_ocr_adapter.py`): VLM-powered intelligent OCR with context understanding, better accuracy for mixed Chinese-English text, and automatic noise filtering.
-- Added **Execution Retry Policy** (`automation/execution_retry.py`): Smart fallback mechanism for failed tool executions, including fuzzy file path matching and alternative suggestions.
-- Added **Unified App Intent Recognition** (`automation/app_profiles/unified_app_intent.py`): Centralized intent parser for WeChat, WeCom, Xiaohongshu, and other apps; replaces scattered heuristics modules.
-
-## Previous Updates (2026-04-01)
-
-- Added **Computer Use** tools (`computer_*` in `automation/computer_use.py`): screen-coordinate GUI aligned with Claude Computer Use; optional ReAct vision via JSON `react_computer_use_vision` or env `ARIA_REACT_COMPUTER_USE_VISION` (requires a vision-capable `MODEL_NAME`). Audit export: `GET /api/audit_export?conversation_id=...`.
-
-- Implemented **ReAct** execution mode (Thought → Action → Observation loop): enable in the web UI (Settings) or send `react_mode: true` with `/api/process_input`; max steps via `ARIA_REACT_MAX_STEPS` (default 20).
-- Added a clear action risk policy (`safe` / `medium` / `high`) and confirmation behavior.
-- Added methodology health API endpoint: `GET /api/methodology_health`.
-- Added regression benchmark script: `scripts/run_regression_benchmark.py`.
-- Added regression report output path: `data/benchmarks/latest_regression_report.json`.
-- Upgraded Experience Center to **Skills Hub** with recommended skills, inline health signals, and one-click reuse.
-- Added hub APIs for aggregation, draft generation from recent successes, import pre-check, and event metrics.
-- Added benchmark strict gate fields (`strict_pass_rate`, `strict_ok`) and CLI threshold checks.
-- Workspace mode is simplified to a single `aria` mode; legacy engineer/autocad values are normalized to `aria`.
-- Performance: optional `ARIA_UI_ANIMATION_SLEEP_MS`, smarter LLM retries (`ARIA_LLM_*`), ReAct JPEG quality env, SSE-aware workflow polling; see **Performance tuning** and `scripts/measure_process_input_perf.py`.
-- Added runtime orchestration modules (`runtime/orchestration.py`, `runtime/scheduler.py`) with dependency-aware parallel scheduling (`ARIA_AGENT_MAX_PARALLEL`).
-- Added MCP memory server (`memory/mcp_memory_server.py`) exposing `remember/search/recall/rollback` for cross-session memory workflows.
-
-## Core Features
-
-- 🤖 **Intelligent Task Parsing**: Automatically analyzes user requirements and breaks them down into executable subtasks
-- 🖥️ **Desktop Automation**: Operates Windows desktop applications (WeChat, WPS, browsers, etc.)
-- 🌐 **Browser Automation**: Real browser operations powered by Playwright
-- 💬 **Messaging Automation**: Channel-based messaging actions (`messaging_*`) with adapter-driven execution (currently WeChat/WeCom)
-- 📱 **Social Media Automation**: Xiaohongshu (RED) post publishing with image upload, title, content, and topic tags
-- 📁 **File Processing**: Automatic file read/write, organization, and Office document parsing
-- 🧠 **Methodology Learning**: Learns from successful tasks and builds a solution repository
-- 🕸️ **Runtime Orchestration**: Dependency-aware multi-agent execution graph with bounded parallel scheduling
-- 🧷 **MCP Memory Service**: FastMCP memory tools (`remember`, `search`, `recall`, `rollback`) for external memory integration
-- 🧩 **Skills Hub**: Turns methodologies into reusable skill cards with recommendation and risk hints
-- 🧪 **Harness Feedback Loop**: Uses benchmark/health signals to drive recommendation confidence
-- 🔍 **OCR Screen Recognition**: Automatically recognizes screen content; supports Tesseract and VLM-powered (DeepSeek/Doubao-vision) intelligent OCR
-- 📊 **Multimodal Support**: Image upload and understanding (requires vision-capable models)
-- 🧱 **CAD Attachment Intake (MVP)**: Supports uploading `dxf`/`dwg`; `dxf` provides lightweight layer/entity summary, `dwg` provides capability hint
-
-## System Architecture
+## 架构概览
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                      Web UI (Flask)                      │
-│                   templates/ + static/                   │
-└─────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────┐
-│                   ARIAManager (Commander)                │
-│  - Task Parser                                           │
-│  - Solution Learner                                      │
-│  - Agent Creation & Scheduling                           │
-│  - Memory System (STM/MTM/LTM)                           │
-└─────────────────────────────────────────────────────────┘
-                            │
-        ┌───────────────────┼───────────────────┐
-        ▼                   ▼                   ▼
-┌───────────────┐  ┌───────────────┐  ┌───────────────┐
-│  LLM Layer    │  │  Automation   │  │  Memory       │
-│  Volcengine   │  │  - browser_*  │  │  - STM        │
-│  Bailian/Ark  │  │  - desktop_*  │  │  - MTM        │
-│               │  │  - messaging_*│  │  - LTM        │
-│               │  │  - file_*     │  │  (Methodology)│
-└───────────────┘  └───────────────┘  └───────────────┘
+aria_manager.py          核心管理器：任务解析、Action 调度、工具执行
+web_app.py               Flask Web 应用：API 端点、SSE 事件流
+config.py                模型池配置（MODEL_POOL）
+runtime/
+  taor_loop.py           TAOR 自主执行循环（Think-Act-Observe-Repeat）
+  kairos.py              KAIROS 主动执行引擎（定时触发 + AutoDream 协调）
+  auto_dream.py          AutoDream 后台记忆整合引擎
+  trigger_scheduler.py   Cron 定时任务调度器（持久化到 data/scheduled_tasks.json）
+  hybrid_planner.py      混合规划器（HybridPlanner + PlanTracker）
+  permissions.py         五级权限模型（PermissionModel）
+  shell_danger.py        Shell 高风险命令拦截
+  timing_breakdown.py    执行耗时分解
+  orchestration.py       端到端管道门面（OrchestrationFacade）
+  scheduler.py           依赖感知并行调度器
+memory/
+  memory_system.py       STM / MTM / LTM 三层记忆
+  auto_memory.py         跨会话用户模式学习（AutoMemoryManager）
+  mcp_memory_server.py   MCP 内存服务器
+llm/
+  volcengine_llm.py      主 LLM 客户端（火山引擎 / ARK API）
+  providers.py           多 Provider 抽象层（OpenAI / Anthropic / Groq / DeepSeek 等）
+  model_config.py        Vision / Action 三模型分离配置
+  groq_llm.py            Groq 独立客户端
+automation/
+  browser_driver.py      Playwright 浏览器自动化
+  desktop_uia.py         Windows UIA 桌面自动化
+  screen_ocr.py          屏幕 OCR（pytesseract）
+  computer_use.py        Computer Use 截图 + 鼠标键盘控制
+  osatlas_grounding.py   OS-Atlas 视觉定位（可选）
+  interaction_intelligence.py  交互智能层
+  app_profiles/          应用专属 Action 合并规则与 Prompt 片段
+data/
+  scheduled_tasks.json   定时任务持久化
+  methodology/           方法论库（LTM 持久化）
 ```
 
-## Quick Start
+## 快速开始
 
-### 1. Install Dependencies
+### 依赖安装
 
 ```bash
 pip install -r requirements.txt
+# Windows 桌面自动化需额外安装 pywinauto / pyautogui（requirements.txt 已按平台条件声明）
+# 浏览器自动化需初始化 Playwright
+playwright install
 ```
 
-### 2. Configure Environment Variables
+### 环境变量
 
-Copy `.env.example` to `.env` and configure necessary parameters:
+复制 `.env.example` 为 `.env` 并填写：
 
-```bash
-# Volcengine Ark (Recommended)
-ARK_API_KEY=your_api_key_here
-OPENAI_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
-MODEL_NAME=doubao-seed-2-0-lite-260215
+```
+# 主 LLM（火山引擎 ARK API）
+ARK_API_KEY=...
+MODEL_NAME=doubao-seed-2-0-lite-260215   # 默认值，可覆盖
 
-# Or Alibaba Cloud Bailian
-# OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-# DASHSCOPE_API_KEY=your_api_key_here
+# 可选：Computer Use 专用 Vision / Action 模型
+ARIA_VISION_PROVIDER=groq
+ARIA_VISION_MODEL=...
+ARIA_ACTION_PROVIDER=openai
+ARIA_ACTION_MODEL=...
+
+# 权限级别：plan / default / accept_edits / dont_ask / bypass
+ARIA_PERMISSION_LEVEL=default
+
+# TAOR 自主循环
+ARIA_TAOR_MODE=0
+ARIA_TAOR_MAX_TURNS=20
+
+# KAIROS 主动引擎
+ARIA_KAIROS_ENABLED=0
+ARIA_AUTODREAM_IDLE_SECONDS=300
+ARIA_AUTODREAM_INTERVAL_SECONDS=3600
+
+# 跨会话记忆
+ARIA_AUTO_MEMORY_ENABLED=1
 ```
 
-### 3. Start the Application
+### 启动
 
-**Option 1: Using batch file (Windows)**
-```bash
-aria.bat
-```
-
-**Option 2: Run Python directly**
 ```bash
 python web_app.py
 ```
 
-After startup, visit http://localhost:5000 to use the application.
+默认监听 `http://localhost:5000`。
 
-## Performance tuning
+## 核心模块
 
-Tune behavior with environment variables (see `.env.example`). Typical combinations for lower latency:
+### TAOR 自主循环
 
-| Goal | Suggested knobs |
-|------|-----------------|
-| Less LLM depth | `REASONING_EFFORT_DEFAULT=low` or `minimal`; on DashScope, `ENABLE_THINKING=false` if compatible |
-| Fail faster | `LLM_TIMEOUT_SECONDS=30`–`45` (raise if you see timeouts) |
-| Shorter ReAct loops | `ARIA_REACT_MAX_STEPS=8`–`12` |
-| Smaller vision payloads | Only enable `ARIA_REACT_COMPUTER_USE_VISION` when needed; `ARIA_REACT_COMPUTER_USE_JPEG_MAX=960`–`1280`; `ARIA_REACT_COMPUTER_USE_JPEG_QUALITY=60`–`75` |
-| Less disk / capture work | Turn off `ARIA_ACTION_SCREENSHOT` and the UI “action screenshots” option when not debugging |
-| Skip UI-only delays | Keep `ARIA_UI_ANIMATION_SLEEP_MS=0` (default) |
-| LLM retries | `ARIA_LLM_MAX_RETRIES=2`, `ARIA_LLM_RETRY_SLEEP_BASE_MS=500`, `ARIA_LLM_RETRY_SLEEP_MAX_MS=4000` (retries only on timeouts, connection errors, 429, and 5xx) |
+`runtime/taor_loop.py` — Think-Act-Observe-Repeat 循环，每轮输出严格 JSON：
 
-**Baseline metrics:** With `web_app.py` running, record full request time and `token_usage` via:
+```json
+{
+  "thought": "...",
+  "action": { "type": "...", ... },
+  "finish": false,
+  "final_result": null,
+  "is_success": null
+}
+```
+
+- 启用：`ARIA_TAOR_MODE=1`
+- 最大轮数：`ARIA_TAOR_MAX_TURNS`（上限 60，默认 20）
+- 内置上下文压缩（`_rebuild_messages_with_compact`）与任务面检测（`_detect_task_surface`）
+
+### KAIROS 主动执行引擎
+
+`runtime/kairos.py` — 后台守护线程，协调两个子系统：
+
+- **TriggerScheduler**：Cron 表达式定时触发，任务持久化到 `data/scheduled_tasks.json`
+- **AutoDreamEngine**：空闲时自动整合记忆、衰减旧条目
+
+启用：`ARIA_KAIROS_ENABLED=1`
+
+### 权限模型（五级）
+
+`runtime/permissions.py`
+
+| 级别 | 说明 |
+|------|------|
+| `plan` | 只读探测，仅允许 `PLAN_MODE_ALLOWED_TYPES` |
+| `default` | 写操作和 Shell 需询问用户 |
+| `accept_edits` | 文件 / 浏览器 / 桌面自动批准，Shell / 消息仍需询问 |
+| `dont_ask` | 白名单内所有操作自动批准（高风险仍询问） |
+| `bypass` | 所有操作自动批准（CI/CD 模式） |
+
+高风险类型（`HIGH_RISK_ACTION_TYPES`）：`kb_delete_all` / `file_delete` / `shell_run` / `desktop_hotkey` / `desktop_type` / `desktop_sequence`
+
+### Action 类型
+
+共 41 个已注册 Action，分为以下类别：
+
+| 类别 | Action |
+|------|--------|
+| 文件 | `file_write` `file_move` `file_delete` |
+| Shell | `shell_run` |
+| 浏览器 | `browser_open` `browser_click` `browser_type` `browser_find` `browser_hover` `browser_select` `browser_upload` `browser_scroll` `browser_wait` `browser_js` `browser_press` |
+| 桌面 | `desktop_open_app` `desktop_hotkey` `desktop_type` `desktop_sequence` |
+| Computer Use | `computer_screenshot` `computer_click` `computer_click_element` `computer_double_click` `computer_move` `computer_drag` `computer_scroll` `computer_key` `computer_type` `computer_wait` |
+| 屏幕 | `screen_ocr` `screen_find_text` `screen_click_text` |
+| Web | `web_fetch` `web_understand` |
+| 媒体 | `media_summarize` |
+| 知识库 | `kb_delete_all` `kb_delete_by_keyword` `kb_delete_low_quality` |
+| 会话 | `conversation_new` `window_activate` |
+
+### LLM 多 Provider
+
+`llm/providers.py` 提供统一抽象，支持：OpenAI、Anthropic、Groq、DeepSeek、OpenRouter、Gemini、Fireworks、Llama、Mistral、Moonshot。
+
+`llm/model_config.py` 支持为 Vision / Action 角色独立配置 Provider，通过 `ARIA_VISION_PROVIDER` / `ARIA_ACTION_PROVIDER` 等环境变量控制。
+
+主 LLM 默认使用火山引擎 ARK API（`llm/volcengine_llm.py`），模型由 `MODEL_NAME` 指定，默认 `doubao-seed-2-0-lite-260215`。
+
+### 记忆系统
+
+- **三层记忆**（`memory/memory_system.py`）：STM（短期）/ MTM（中期）/ LTM（长期）
+- **AutoMemory**（`memory/auto_memory.py`）：跨会话用户模式学习，通过 `get_system_prompt_fragment` 注入 TAOR 系统提示；`ARIA_AUTO_MEMORY_ENABLED=0` 可关闭
+- **AutoDream**（`runtime/auto_dream.py`）：空闲触发的后台记忆整合，自动衰减 90 天以上旧条目
+
+## 安全边界
+
+- `runtime/shell_danger.py` 拦截所有高危 Shell 命令（`rm -rf /`、`format`、`DROP TABLE` 等）
+- 破坏性操作（`file_delete`、`shell_run`、`kb_delete_all`）必须经过确认路径
+- 永远不声称操作成功，除非执行返回明确的 success 结果
+
+## 测试
 
 ```bash
-python scripts/measure_process_input_perf.py
-python scripts/measure_process_input_perf.py --react
-python scripts/measure_process_input_perf.py --react --react-vision
+python -m pytest tests/
 ```
 
-Use browser DevTools **Network** timing for **TTFB** on `/api/process_input`. A sample local run is committed under `data/benchmarks/perf_baseline_local_2026-04-01.json` (replace by your own runs as needed).
-
-The web UI stops workflow **polling** while the **SSE** stream is connected and receiving events, and falls back to polling only when the stream errors.
-
-## Project Structure
-
-```
-Aria/
-├── aria_manager.py          # Core manager: task parsing, agent scheduling, memory system
-├── web_app.py               # Flask web application: API endpoints and frontend routes
-├── config.py                # Configuration: model pool and default parameters
-├── method_lib.py            # Methodology library: solution storage and retrieval
-├── conversation_lib.py      # Conversation library: dialogue history management
-├── chat_attachments.py      # Attachment handling: file upload, OCR, summary extraction
-├── requirements.txt         # Python dependencies
-├── .env.example             # Environment variable template
-│
-├── automation/              # Automation execution layer
-│   ├── browser_driver.py    # Browser automation (Playwright)
-│   ├── computer_use.py      # Coordinate-level GUI operations (click/drag/type/screenshot)
-│   ├── desktop_uia.py       # Desktop application automation (pywinauto)
-│   ├── wechat_driver.py     # WeChat/WeCom adapter backend for messaging capability
-│   ├── xiaohongshu_driver.py # Xiaohongshu (RED) browser automation for post publishing
-│   ├── messaging_capability.py # Channel-agnostic messaging capability contract + adapter
-│   ├── deepseek_ocr_adapter.py # VLM-powered intelligent OCR (DeepSeek/vision model)
-│   ├── execution_retry.py   # Smart execution retry policy with fuzzy file path fallback
-│   └── screen_ocr.py        # Screen OCR recognition
-│
-├── llm/                     # LLM inference layer
-│   └── volcengine_llm.py    # Volcengine/Bailian API wrapper
-│
-├── memory/                  # Memory system
-│   ├── memory_system.py     # Short-term/Mid-term/Long-term memory management
-│   └── mcp_memory_server.py # MCP memory server (remember/search/recall/rollback)
-│
-├── runtime/                 # Runtime orchestration layer
-│   ├── orchestration.py     # End-to-end pipeline facade
-│   ├── scheduler.py         # Dependency-aware parallel scheduler
-│   └── execution_graph.py   # Agent execution DAG builder
-│
-├── templates/               # HTML templates
-│   ├── landing.html         # Landing page
-│   └── simple_index.html    # Main interaction interface
-│
-├── static/                  # Static assets
-│   ├── img/                 # Image resources
-│   └── locales/             # Internationalization files
-│       ├── en.json
-│       └── zh.json
-│
-├── docs/runtime/            # Runtime operation docs
-│   ├── aria_agent_runbook.md
-│   ├── mcp_memory_integration.md
-│   └── multi_agent_runtime_contract.md
-│
-└── data/                    # Data directory (generated at runtime)
-    ├── methodology/         # Methodology library storage
-    │   ├── methodologies.json
-    │   └── ab_stats.json
-    ├── benchmarks/
-    │   └── latest_regression_report.json
-    └── experience_center_metrics.json
-```
-
-## Core Components
-
-### ARIAManager (Commander)
-
-Core workflow:
-1. **Task Parsing**: Understand user input, identify intent and key information
-2. **Methodology Matching**: Retrieve similar solutions from long-term memory (reuse directly if similarity ≥ 0.7)
-3. **Solution Learning**: Learn new solutions from external sources when no match exists (supports skipping to save tokens)
-4. **Task Decomposition**: Break complex tasks into executable subtasks
-5. **Agent Creation**: Create specialized agents for each subtask
-6. **Execution Scheduling**: Coordinate agent execution and monitor progress
-7. **Result Validation**: Verify execution results meet expectations
-8. **Methodology Consolidation**: Save successful experiences to long-term memory
-
-### Memory System
-
-- **Short-Term Memory (STM)**: Current task context, execution state, logs
-- **Mid-Term Memory (MTM)**: Task templates, agent combination patterns, common prompts
-- **Long-Term Memory (LTM)**: Methodology library, best practice cases, knowledge base
-
-### Automation Capabilities
-
-| Capability | Module | Dependencies | Description |
-|------------|--------|--------------|-------------|
-| Browser Operations | `browser_*` | Playwright | Open pages, click, type, screenshot, etc. |
-| Desktop Applications | `desktop_*` | pywinauto | Launch apps, window operations, UIA element recognition |
-| Messaging Channels | `messaging_*` | - | Send messages via channel adapters (current: WeChat/WeCom) |
-| File Operations | `file_*` | - | Read/write files, organize directories, Office document parsing |
-| Screen Recognition | `screen_ocr` | pytesseract | OCR text recognition, screen content understanding |
-
-## Configuration
-
-### Environment Variables Reference
-
-#### Required
-- `ARK_API_KEY`: Volcengine Ark API key
-- `OPENAI_BASE_URL`: API base URL
-- `MODEL_NAME`: Model ID to use
-
-#### Optional
-- `REASONING_EFFORT_DEFAULT`: Default reasoning effort level (minimal/low/medium/high)
-- `ARIA_REASONING_ROUTER`: Lightweight model router switch
-- `ARIA_TEMPORAL_METHOD_MATCH_FLOOR`: Temporal task methodology matching threshold (default 0.45)
-- `ARIA_DEFAULT_WORKSPACE_MODE`: Server default workspace mode (`aria`)
-- `ARIA_PLAYWRIGHT`: Enable real browser automation (set to 1)
-- `ARIA_DESKTOP_UIA`: Enable desktop shortcuts/input (set to 1)
-- `ARIA_WECHAT_PREFER_DESKTOP`: Prefer desktop adapter path for WeChat/WeCom (set to 1)
-- `ARIA_ACTION_SCREENSHOT`: Auto full-screen screenshot after actions (set to 1)
-- `ARIA_REACT_MAX_STEPS`: Max ReAct iterations per execution session (default 20)
-- `ARIA_AGENT_MAX_PARALLEL`: Max parallel agents in runtime scheduler (default 2)
-- `ARIA_COMPUTER_USE`: Enable/disable computer-use coordinate actions (`1`/`0`)
-- `ARIA_COMPUTER_USE_ALLOW_REGIONS`: Optional click/drag allowlist regions as JSON `[[left,top,width,height], ...]`
-- `ARIA_COMPUTER_USE_BLOCK_TITLE_KEYWORDS`: Block mutating actions when foreground window title matches keywords
-
-### Action Risk Policy (safe / medium / high)
-
-- `safe`: auto execute directly
-- `medium`: require one confirmation
-- `high`: require double confirmation
-
-Risk level is inferred from action plan + action type and is returned in action-plan responses.
-
-### Reasoning Effort Levels
-
-| Level | Use Case | Token Consumption |
-|-------|----------|-------------------|
-| minimal | Simple Q&A, greetings | Lowest |
-| low | Information retrieval, simple tasks | Low |
-| medium | Complex task planning, code generation | Medium |
-| high | Deep reasoning, complex problem solving | High |
-
-The system automatically selects the effort level based on task type, or you can specify it manually.
-
-## API Endpoints
-
-### Core Endpoints
-
-- `POST /api/process_input`: Process user input (supports multipart forms and file uploads). Optional JSON/form field `react_mode` enables ReAct-style step-by-step execution after confirmation (see `.env.example` for `ARIA_REACT_MAX_STEPS`).
-- `POST /api/confirm_actions`: Confirm action plan execution
-- `POST /api/execution/start`: Start execution directly
-- `POST /api/execution/pause`: Pause execution
-- `POST /api/execution/resume`: Resume execution
-- `POST /api/execution/abort`: Abort execution
-- `GET /api/execution/status`: Query execution status
-- `GET /api/workflow_stream`: SSE real-time workflow event streaming
-
-### Conversation Management
-
-- `POST /api/conversations`: Create new conversation
-- `GET /api/conversations`: List conversations
-- `GET /api/conversations/<id>`: Get conversation details
-- `DELETE /api/conversations/<id>`: Delete conversation
-
-### Methodology Management
-
-- `GET /api/get_methodologies`: Get all methodologies
-- `POST /api/search_methodology`: Search methodologies
-- `POST /api/create_methodology`: Create methodology
-- `POST /api/import_methodologies`: Import methodologies with pre-check
-- `POST /api/update_methodology_category`: Update category
-- `POST /api/delete_methodology`: Delete single methodology
-- `POST /api/delete_methodologies_batch`: Batch delete
-- `GET /api/methodology_health`: Methodology health dashboard (quality/AB stats)
-- `GET /api/experience_hub_data`: Skills Hub aggregate data (recommended skills / alerts / regression snapshot)
-- `GET /api/experience_recent_successes`: Recent successful conversations for draft generation
-- `POST /api/create_skill_draft_from_recent`: Generate skill draft from recent success
-- `POST /api/experience_metrics/event`: Record hub behavior metrics
-
-## Usage Examples
-
-### Example 1: Send Message via Channel
-
-User input:
-> Send a message to Zhang San on WeChat: Meeting tomorrow at 10 AM to discuss project progress
-
-ARIA workflow:
-1. Identify intent: Send message via channel
-2. Extract information: Recipient=Zhang San, Content=Meeting tomorrow at 10 AM to discuss project progress
-3. Call `messaging_send(channel="wechat", recipient="Zhang San", content="Meeting tomorrow at 10 AM to discuss project progress")`
-4. Screenshot verification after execution (if configured)
-5. Return execution result
-
-### Example 2: Browser Operations
-
-User input:
-> Open Baidu, search for "Python tutorial", open the first result
-
-ARIA workflow:
-1. `browser_open("https://www.baidu.com")`
-2. `browser_type("#kw", "Python tutorial")`
-3. `browser_click("#su")`
-4. Wait for search results, click first link
-5. Return page title and summary
-
-### Example 3: File Organization
-
-User input:
-> Move all PDF files from Downloads folder to "Documents/PDFs" directory
-
-ARIA workflow:
-1. Scan Downloads folder, identify all .pdf files
-2. Create target directory (if not exists)
-3. Move files one by one
-4. Return move statistics
-
-## Development Guide
-
-### Harness Baseline
-
-- `AGENTS.md`: runtime guardrails index (keep concise, directory style)
-- `pyproject.toml`: unified lint/type/test config (`ruff` / `mypy` / `pytest`)
-- `.pre-commit-config.yaml`: local hard checks before commits
-- `.github/workflows/ci.yml`: lint + type + test + regression benchmark gate
-- `.github/workflows/housekeeping.yml`: weekly drift and quality housekeeping
-
-### Runtime Operations Docs
-
-- `docs/runtime/aria_agent_runbook.md`: operations-first runbook for incident/release/perf scenarios
-- `docs/runtime/multi_agent_runtime_contract.md`: multi-agent runtime contract and boundaries
-- `docs/runtime/mcp_memory_integration.md`: MCP memory server integration and usage patterns
-
-### Adding New Automation Capabilities
-
-1. Create a new driver module in `automation/` directory
-2. Add tool definition in `ARIAManager._build_agent_tool_definitions()` in `aria_manager.py`
-3. Implement execution logic in `ARIAManager._execute_tool()`
-4. Update documentation and test cases
-
-### Adjusting Task Parsing Logic
-
-Modify in `aria_manager.py`:
-- `plan_actions()`: Task planning logic
-- `parse_task()`: Task parsing logic
-- `classify_interaction_mode()`: Interaction mode classification
-
-### Optimizing Methodology Matching
-
-Adjust in `memory/memory_system.py`:
-- `search_similar_methodologies()`: Similarity calculation algorithm
-- `CATEGORY_RULES` in `method_lib.py`: Classification rules
-
-### Regression Benchmark
-
-Use built-in benchmark tasks to validate planner coverage and risk-layer behavior:
-
-```bash
-python scripts/run_regression_benchmark.py
-```
-
-Optional quality gate:
-
-```bash
-python scripts/run_regression_benchmark.py --min-match-rate 0.6 --min-strict-pass-rate 0.5
-```
-
-Report is written to `data/benchmarks/latest_regression_report.json`.
-
-### Skills Hub (Experience Center v2)
-
-- Experience Center is upgraded to **Skills Hub**:
-  - top recommended skills
-  - inline quality + regression signals
-  - one-click reuse / plan bootstrap
-- New authoring workflow:
-  - `New Method` creates a draft editor
-  - `从最近成功任务生成草稿` bootstraps a draft from recent conversation outcomes
-  - import supports JSON array pre-check (missing fields / duplicate event key)
-- Product metrics file:
-  - `data/experience_center_metrics.json`
-  - tracks events such as tab open, reuse click, draft save, import, rollback
-
-### Quick Verification Checklist
-
-```bash
-# 0) Install quality tools
-pip install ruff mypy pytest pre-commit
-
-# 0.1) Optional: enable local commit hooks
-pre-commit install
-
-# 1) Start web app
-python web_app.py
-
-# 2) Check hub aggregate API
-curl http://localhost:5000/api/experience_hub_data
-
-# 3) Run benchmark and enforce gate
-python scripts/run_regression_benchmark.py --min-match-rate 0.6 --min-strict-pass-rate 0.5
-
-# 4) ReAct API sanity check (requires running web_app.py)
-python scripts/react_api_sanity_check.py --base-url http://127.0.0.1:5000
-
-# 5) Weekly housekeeping (docs/rules/quality drift)
-python scripts/harness_housekeeping.py --min-strict-pass-rate 0.6
-```
-
-## Important Notes
-
-1. **API Key Security**: Do not commit `.env` file to version control
-2. **Windows Dependencies**: Desktop automation and desktop messaging adapters are only available on Windows
-3. **Browser Driver**: Run `playwright install chromium` to use Playwright
-4. **OCR Accuracy**: pytesseract requires Tesseract-OCR engine installation
-5. **Memory Management**: Consider periodically clearing memory cache for long-running services
-
-## Tech Stack
-
-- **Backend**: Python 3.8+, Flask
-- **LLM**: Volcengine Ark / Alibaba Cloud Bailian
-- **Browser Automation**: Playwright
-- **Desktop Automation**: pywinauto, pyautogui
-- **OCR**: pytesseract, Pillow
-- **Document Parsing**: python-docx, openpyxl, python-pptx, pypdf
-
-## License
-
-This project is licensed under the MIT License.
-
-Third-party notices and attributions are documented in `THIRD_PARTY_NOTICES.md`.
-This includes the upstream `agency-agents` assets used for personality catalog integration.
-
-## Contributing
-
-Issues and Pull Requests are welcome!
-
-## Contact
-
-For questions or suggestions, please contact via:
-- Submit a GitHub Issue
-- Email: hcsun0411@gmail.com
-
-**Author**: Haochen Sun
-
----
-
-**Last Updated**: 2026-04-03
+关键测试：
+
+- `tests/test_action_registry_consistency.py` — Action 注册表一致性
+- `tests/test_taor_permissions.py` — 权限模型
+- `tests/test_shell_danger.py` — Shell 危险命令拦截
+- `tests/test_hybrid_planner.py` — 混合规划器
+- `tests/test_timing_breakdown.py` — 耗时分解
+- `tests/test_auto_memory_prompt_fragment.py` — AutoMemory 系统提示注入

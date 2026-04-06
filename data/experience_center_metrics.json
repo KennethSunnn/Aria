@@ -1,6 +1,6 @@
 {
   "counters": {
-    "experience_tab_open": 6,
+    "experience_tab_open": 8,
     "method_detail_open": 1
   },
   "recent_events": [
@@ -45,7 +45,19 @@
       "method_id": "",
       "conversation_id": "5ed7fa18-b7db-430e-813c-80e52157db80",
       "at": "2026-04-03 23:56:46"
+    },
+    {
+      "event": "experience_tab_open",
+      "method_id": "",
+      "conversation_id": "5ed7fa18-b7db-430e-813c-80e52157db80",
+      "at": "2026-04-05 21:52:35"
+    },
+    {
+      "event": "experience_tab_open",
+      "method_id": "",
+      "conversation_id": "5ed7fa18-b7db-430e-813c-80e52157db80",
+      "at": "2026-04-06 12:26:27"
     }
   ],
-  "updated_at": "2026-04-03 23:56:46"
+  "updated_at": "2026-04-06 12:26:27"
 }

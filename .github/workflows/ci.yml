@@ -29,3 +29,5 @@ jobs:
         run: |
           python scripts/ci_bounded_retry.py --max-attempts 2 --sleep-seconds 3 -- \
             python scripts/run_regression_benchmark.py --min-match-rate 0.60 --min-strict-pass-rate 0.50
+      - name: Test plan (CI tier)
+        run: python scripts/run_test_plan.py --plan main_plan.yaml --tier ci --fail-fast

@@ -1,0 +1,24 @@
+{
+  "generated_at": "2026-04-06 18:45:24",
+  "plan_id": "main_plan_v1",
+  "tier": "smoke",
+  "passed": true,
+  "total_suites": 1,
+  "passed_suites": 1,
+  "failed_suites": 0,
+  "total_elapsed_ms": 7765,
+  "suite_results": [
+    {
+      "suite_id": "smoke_unit",
+      "tier": "smoke",
+      "passed": true,
+      "returncode": 0,
+      "elapsed_ms": 7765,
+      "test_passed": 0,
+      "test_failed": 0,
+      "test_skipped": 0,
+      "stdout_tail": "................                                                         [100%]\n",
+      "stderr_tail": ""
+    }
+  ]
+}

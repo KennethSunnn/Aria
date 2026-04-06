@@ -110,20 +110,25 @@ def ocr_screen(
     region: tuple[int, int, int, int] | None = None,
     lang: str = "chi_sim+eng",
     *,
-    min_confidence: int = 60,
+    min_confidence: int = 30,
     scale: float = 1.0,
     tesseract_config: str | None = None,
 ) -> dict[str, Any]:
     """
     OCR 识别屏幕文字
-    
+
+    后端由环境变量 ARIA_OCR_BACKEND 控制：
+    - deepseek_local: 本地 DeepSeek-OCR-2 HF 模型（需 CUDA）；不可用时自动降级 tesseract
+    - deepseek_vlm:   远程 VLM API；不可用时自动降级 tesseract
+    - tesseract（默认）: Tesseract OCR
+
     Args:
         region: (left, top, width, height) 或 None（全屏）
         lang: 'chi_sim+eng'（中英文），'eng'（仅英文），'chi_sim'（仅中文）
         min_confidence: 词块最低置信度（0–100）；微信等场景英文常低于 60，可降到 15–30
         scale: 截图放大倍数（>1 有利于小字号英文）
         tesseract_config: 传给 pytesseract 的额外 config（如 --psm 6）
-    
+
     Returns:
         {
             "success": bool,
@@ -136,6 +141,29 @@ def ocr_screen(
         }
     """
     _load_project_dotenv()
+
+    backend = os.getenv("ARIA_OCR_BACKEND", "tesseract").strip().lower()
+
+    if backend == "deepseek_local":
+        try:
+            from automation.deepseek_ocr_adapter import ocr_screen_with_local_model
+            result = ocr_screen_with_local_model(region)
+            if result.get("success"):
+                return result
+            logger.warning(f"deepseek_local OCR 失败，降级到 tesseract: {result.get('error')}")
+        except Exception as e:
+            logger.warning(f"deepseek_local OCR 异常，降级到 tesseract: {e}")
+
+    elif backend == "deepseek_vlm":
+        try:
+            from automation.deepseek_ocr_adapter import ocr_screen_with_vlm
+            result = ocr_screen_with_vlm(region, task="free_ocr")
+            if result.get("success"):
+                return result
+            logger.warning(f"deepseek_vlm OCR 失败，降级到 tesseract: {result.get('error')}")
+        except Exception as e:
+            logger.warning(f"deepseek_vlm OCR 异常，降级到 tesseract: {e}")
+
     # 检查依赖
     ok, err = _check_dependencies()
     if not ok:
@@ -177,15 +205,23 @@ def ocr_screen(
         cfg = (tesseract_config or "").strip() or None
 
         # OCR 识别完整文本
-        text = pytesseract.image_to_string(screenshot, lang=lang, config=cfg)
+        try:
+            text = pytesseract.image_to_string(screenshot, lang=lang, config=cfg)
+        except Exception as tess_err:
+            raise RuntimeError(f"tesseract_ocr_failed:{tess_err}") from tess_err
+        if text is None:
+            text = ""
 
         # OCR 识别详细数据（位置 + 置信度）
-        data = pytesseract.image_to_data(
-            screenshot,
-            lang=lang,
-            output_type=pytesseract.Output.DICT,
-            config=cfg,
-        )
+        try:
+            data = pytesseract.image_to_data(
+                screenshot,
+                lang=lang,
+                output_type=pytesseract.Output.DICT,
+                config=cfg,
+            )
+        except Exception:
+            data = {"text": [], "conf": [], "left": [], "top": [], "width": [], "height": []}
 
         blocks = []
         for i in range(len(data["text"])):
@@ -239,16 +275,21 @@ def ocr_screen(
 def find_text_on_screen(
     search_text: str,
     region: tuple[int, int, int, int] | None = None,
-    lang: str = 'chi_sim+eng'
+    lang: str = 'chi_sim+eng',
+    *,
+    scale: float = 2.0,
+    min_confidence: int = 30,
 ) -> dict[str, Any]:
     """
     在屏幕上查找指定文字的位置
-    
+
     Args:
-        search_text: 要查找的文字
-        region: (left, top, width, height) 或 None（全屏）
-        lang: OCR 语言
-    
+        search_text:    要查找的文字
+        region:         (left, top, width, height) 或 None（全屏）
+        lang:           OCR 语言
+        scale:          截图放大倍数（>1 有利于 UI 小字号识别，默认 2.0）
+        min_confidence: Tesseract 词块最低置信度（0–100），默认 30（UI 文字置信度普遍偏低）
+
     Returns:
         {
             "success": bool,
@@ -266,14 +307,14 @@ def find_text_on_screen(
     """
     if not search_text.strip():
         return {"success": False, "error": "empty_search_text", "matches": []}
-    
-    result = ocr_screen(region, lang)
+
+    result = ocr_screen(region, lang, scale=scale, min_confidence=min_confidence)
     if not result["success"]:
         return result
-    
+
     matches = []
     search_lower = search_text.lower()
-    
+
     for block in result["blocks"]:
         block_text = block["text"]
         if search_lower in block_text.lower():
@@ -286,7 +327,30 @@ def find_text_on_screen(
                 ],
                 "confidence": block["confidence"]
             })
-    
+
+    # 若 Tesseract 无匹配，按 ARIA_OCR_VLM_FALLBACK 决定是否 VLM 兜底（默认开启）
+    if not matches:
+        vlm_fallback = os.getenv("ARIA_OCR_VLM_FALLBACK", "1").strip().lower() not in ("0", "false", "off", "no")
+        if vlm_fallback:
+            try:
+                from automation.deepseek_ocr_adapter import ocr_screen_with_vlm
+                vlm_result = ocr_screen_with_vlm(region, task="free_ocr")
+                if vlm_result.get("success"):
+                    for block in vlm_result.get("blocks", []):
+                        block_text = block.get("text", "")
+                        if search_lower in block_text.lower():
+                            matches.append({
+                                "text": block_text,
+                                "bbox": block.get("bbox", [0, 0, 0, 0]),
+                                "center": [
+                                    block.get("bbox", [0, 0, 0, 0])[0] + block.get("bbox", [0, 0, 0, 0])[2] // 2,
+                                    block.get("bbox", [0, 0, 0, 0])[1] + block.get("bbox", [0, 0, 0, 0])[3] // 2
+                                ],
+                                "confidence": block.get("confidence", 50),
+                            })
+            except Exception as e:
+                logger.debug(f"find_text VLM fallback skipped: {e}")
+
     return {
         "success": True,
         "error": None,
@@ -396,13 +460,35 @@ def type_text(text: str, interval: float = 0.05) -> dict[str, Any]:
 
 def get_capability_summary() -> str:
     """获取屏幕 OCR 能力描述（用于系统提示词）"""
+    _load_project_dotenv()
+    backend = os.getenv("ARIA_OCR_BACKEND", "tesseract").strip().lower()
+
+    if backend == "deepseek_local":
+        try:
+            from automation.deepseek_ocr_adapter import _check_local_model_available
+            ok, err = _check_local_model_available()
+            if ok:
+                return "【屏幕 OCR】已配置（DeepSeek-OCR-2 本地模型）：screen_ocr 识别屏幕文字，screen_find_text 查找文字位置，screen_click_text 点击文字。支持中英文混合识别，识别质量优于 Tesseract。"
+            return f"【屏幕 OCR】DeepSeek-OCR-2 本地模型不可用（{err}），将降级到 Tesseract。"
+        except Exception:
+            pass
+
+    if backend == "deepseek_vlm":
+        try:
+            from automation.deepseek_ocr_adapter import _check_vlm_available
+            ok, _ = _check_vlm_available()
+            if ok:
+                return "【屏幕 OCR】已配置（DeepSeek VLM 远程）：screen_ocr 识别屏幕文字，screen_find_text 查找文字位置，screen_click_text 点击文字。"
+        except Exception:
+            pass
+
     deps_ok, _ = _check_dependencies()
     tess_ok, _ = _check_tesseract()
-    
+
     if not deps_ok:
         return "【屏幕 OCR】未配置（需安装 pytesseract/Pillow；可选 pyautogui）。"
-    
+
     if not tess_ok:
         return "【屏幕 OCR】Tesseract OCR 未检测到。请安装 Tesseract 并添加到 PATH（Windows: https://github.com/UB-Mannheim/tesseract/wiki）。"
-    
-    return "【屏幕 OCR】已配置：screen_ocr 识别屏幕文字，screen_find_text 查找文字位置，screen_click_text 点击文字。支持中英文混合识别。"
+
+    return "【屏幕 OCR】已配置（Tesseract）：screen_ocr 识别屏幕文字，screen_find_text 查找文字位置，screen_click_text 点击文字。支持中英文混合识别。"

@@ -15,6 +15,10 @@ indent-style = "space"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
+markers = [
+    "automation: mock tests for browser_driver / desktop_uia / computer_use (no real GUI)",
+    "smoke: fast guard tests for CI smoke tier",
+]
 
 [tool.mypy]
 python_version = "3.11"

@@ -2,22 +2,22 @@
 
 This runbook standardizes how to invoke and validate multi-agent execution in ARIA.
 
-## Enabled Cursor Rules
+## Role checklist (human or external agent)
 
-- `@agents-orchestrator`
-- `@devops-automator`
-- `@infrastructure-maintainer`
-- `@incident-response-commander`
-- `@testing-api-tester`
-- `@testing-performance-benchmarker`
-- `@reality-checker`
+Use these hats when planning multi-step work; they are not loaded from IDE config files.
+
+- Orchestration: plan phases, minimal specialists, explicit handoffs
+- DevOps / infra: automation, rollback, observability
+- Incident response: severity, containment, comms cadence
+- API / performance testing: deterministic assertions, baselines
+- Reality gate: evidence over claims before sign-off
 
 ## Quick Start
 
 1. Pick a template from `docs/runtime/nexus_micro_ops_templates.md`.
 2. Fill scope/impact/target fields.
-3. Run via `@agents-orchestrator`.
-4. Require final gate from `@reality-checker`.
+3. Execute phased plan with an explicit orchestration owner.
+4. Require a final PASS / NEEDS WORK gate with cited evidence.
 
 ## Ops Scenarios
 

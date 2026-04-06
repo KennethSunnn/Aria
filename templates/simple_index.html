@@ -1098,6 +1098,41 @@
         .event-chat-item.expanded .event-chat-detail {
             display: block;
         }
+        /* TAOR collapsible thinking block in chat bubble */
+        .taor-thinking-block {
+            margin: 4px 0 6px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            background: #f8fafc;
+            overflow: hidden;
+        }
+        .taor-thinking-header {
+            display: flex; align-items: center; gap: 6px;
+            padding: 5px 10px; cursor: pointer; user-select: none;
+            font-size: 11px; font-weight: 500; color: #64748b;
+            background: transparent; border: none; width: 100%; text-align: left;
+        }
+        .taor-thinking-header:hover { background: #f1f5f9; }
+        .taor-thinking-chevron { display: inline-block; transition: transform 0.18s ease; }
+        .taor-thinking-block.collapsed .taor-thinking-chevron { transform: rotate(-90deg); }
+        .taor-thinking-body {
+            padding: 0 10px 8px; font-size: 11.5px; line-height: 1.55;
+            color: #64748b; white-space: pre-wrap; word-break: break-word;
+            max-height: 320px; overflow-y: auto;
+            transition: max-height 0.2s ease, padding 0.15s ease;
+        }
+        .taor-thinking-block.collapsed .taor-thinking-body {
+            max-height: 0; padding-top: 0; padding-bottom: 0; overflow: hidden;
+        }
+        .taor-final-text { font-size: 14px; line-height: 1.5; color: #0f172a; padding-top: 4px; }
+        /* TAOR act cards in execution log */
+        .event-chat-item[data-taor-subtype="taor_act"] { border-left: 3px solid #818cf8; padding-left: 10px; }
+        .taor-thought-preview {
+            margin-top: 5px; font-size: 11px; color: #64748b; font-style: italic;
+            border-left: 2px solid #c7d2fe; padding-left: 6px;
+            white-space: pre-wrap; word-break: break-word;
+        }
+        .taor-action-reason { margin-top: 4px; font-size: 11px; color: #64748b; }
         .story-fullscreen {
             position: fixed !important;
             inset: 16px;
@@ -1493,10 +1528,10 @@
                         <div class="form-check mt-3">
                             <input class="form-check-input" type="checkbox" id="aria-react-mode" autocomplete="off">
                             <label class="form-check-label" for="aria-react-mode" data-i18n="app.settings.reactMode">
-                                ReAct mode: plan one step at a time (Thought → Action → Observation) after you confirm
+                                Force ReAct: always use step-by-step Thought → Action → Observation (otherwise ARIA suggests when appropriate)
                             </label>
                         </div>
-                        <p class="text-muted small mt-2 mb-0" data-i18n="app.settings.reactModeHint">Uses more LLM calls; cap iterations with ARIA_REACT_MAX_STEPS in .env.</p>
+                        <p class="text-muted small mt-2 mb-0" data-i18n="app.settings.reactModeHint">When off, ARIA recommends ReAct per task; you still confirm before the loop starts. More LLM calls when ReAct runs; cap with ARIA_REACT_MAX_STEPS in .env.</p>
                     </div>
                 </div>
             </div>
@@ -1582,6 +1617,51 @@
                 $msgEl.find('.elapsed-note').remove();
                 $msgEl.append(`<div class="elapsed-note text-muted mt-1" style="font-size:12px;">${escapeHtml(line)}</div>`);
             }
+            function formatTimingMs(ms) {
+                const m = Number(ms);
+                if (!Number.isFinite(m) || m < 0) return '0 ms';
+                if (m < 1000) return `${Math.round(m)} ms`;
+                const sec = m / 1000;
+                if (sec < 60) return `${sec.toFixed(2)} s`;
+                const min = Math.floor(sec / 60);
+                const rem = sec - min * 60;
+                return `${min}m ${rem.toFixed(1)}s`;
+            }
+            function formatTimingBreakdown(tb) {
+                if (!tb || typeof tb !== 'object') return '';
+                const e = Number(tb.elapsed_ms);
+                if (!Number.isFinite(e) || e <= 0) return '';
+                const llm = Number(tb.llm_ms) || 0;
+                const loc = Number(tb.local_action_ms) || 0;
+                const oth = Number(tb.other_ms) || 0;
+                const pct = (x) => (e > 0 ? Math.min(100, Math.max(0, Math.round((x / e) * 100))) : 0);
+                const sep = ' · ';
+                const l1 = tf('app.timing.llm', { ms: formatTimingMs(llm), pct: pct(llm) },
+                    `Model API ${formatTimingMs(llm)} (${pct(llm)}%)`);
+                const l2 = tf('app.timing.localAction', { ms: formatTimingMs(loc), pct: pct(loc) },
+                    `Local actions ${formatTimingMs(loc)} (${pct(loc)}%)`);
+                const l3 = tf('app.timing.other', { ms: formatTimingMs(oth), pct: pct(oth) },
+                    `Other ${formatTimingMs(oth)} (${pct(oth)}%)`);
+                const hint = tr('app.timing.hint', 'Includes waits, parsing, and scheduling.');
+                return `${l1}${sep}${l2}${sep}${l3}${sep}${hint}`;
+            }
+            function appendTimingBreakdownToAiMessage($msgEl, tb) {
+                if (!$msgEl || !$msgEl.length) return;
+                const line = formatTimingBreakdown(tb);
+                $msgEl.find('.perf-breakdown-note').remove();
+                if (!line) return;
+                $msgEl.append(`<div class="perf-breakdown-note text-muted mt-1" style="font-size:12px;line-height:1.35;">${escapeHtml(line)}</div>`);
+            }
+            function updateExecTimingBreakdown(tb) {
+                const $el = $('#exec-timing-breakdown');
+                if (!$el.length) return;
+                const line = formatTimingBreakdown(tb);
+                if (line) {
+                    $el.removeClass('d-none').text(line);
+                } else {
+                    $el.addClass('d-none').text('');
+                }
+            }
             function resolveThinkingPhases() {
                 return [
                     tr('app.request.phase.parse', 'Understanding your request'),
@@ -1610,6 +1690,8 @@
             let pendingChatFiles = [];
             let pendingWorkflowEvents = [];
             let currentRequestId = null;
+            /** ARIA_LLM_STREAM=1 时由 SSE llm_stream_delta 累加，最终仍由 process_input JSON 的 result 覆盖 */
+            let llmStreamAccum = '';
             let currentExecutionSessionId = null;
             let executionStatusTimer = null;
             let isTaskRunning = false;
@@ -1760,6 +1842,7 @@
                     react_action: tr('app.stream.stage.react_action', 'Action'),
                     react_observation: tr('app.stream.stage.react_observation', 'Observation'),
                     react_complete: tr('app.stream.stage.react_complete', 'ReAct complete'),
+                    taor_loop: tr('app.stream.stage.taor_loop', 'TAOR Reasoning'),
                 };
                 return map[s] || s;
             }
@@ -2047,7 +2130,9 @@
                     $stream.html(`<div class="text-muted">${tr('app.stream.noEvents', 'No events.')}</div>`);
                     return;
                 }
-                const items = buildMergedEventStream(events).slice(-24);
+                const items = buildMergedEventStream(events)
+                    .filter(evt => !(evt.stage === 'taor_loop' && evt?.detail?.event_subtype !== 'taor_finish'))
+                    .slice(-24);
                 const html = items.map((evt) => {
                     const status = evt.status || 'running';
                     const statusText = (status === 'success' || status === 'completed')
@@ -2063,7 +2148,12 @@
                     const reasonHtml = reason
                         ? `<div class="event-chat-status-reason${reasonClass}">${reasonLabel}：${escapeHtml(String(reason))}</div>`
                         : '';
-                    return `<div class="event-chat-item" data-event-id="${escapeHtml(evt.event_id || '')}">
+                    const isTaorAct = (evt?.detail?.event_subtype === 'taor_act');
+                    const thoughtPreviewHtml = (isTaorAct && evt?.detail?.action_target)
+                        ? `<div class="taor-thought-preview">${escapeHtml(evt.detail.action_target)}</div>`
+                        : '';
+                    const actionReasonHtml = '';
+                    return `<div class="event-chat-item" data-event-id="${escapeHtml(evt.event_id || '')}" data-taor-subtype="${escapeHtml(evt?.detail?.event_subtype || '')}">
                         <div class="event-chat-header">
                             <div class="d-flex align-items-center">
                                 <span class="agent-avatar ${avatar.cls}" style="width:28px;height:28px;font-size:11px;">${escapeHtml(avatar.code)}</span>
@@ -2078,6 +2168,8 @@
                             </div>
                         </div>
                         <div class="event-chat-content">${escapeHtml(evt.summary || displayStageName(evt.stage) || '')}</div>
+                        ${thoughtPreviewHtml}
+                        ${actionReasonHtml}
                         ${reasonHtml}
                         <div class="text-primary mt-1" style="font-size:11px;cursor:pointer;" data-detail-toggle="1">${tr('app.stream.expandDetail', 'Expand detail')}</div>
                         <div class="event-chat-detail">${detailHtml}</div>
@@ -2096,7 +2188,10 @@
                     const stage = evt.stage || 'unknown_stage';
                     const agent = evt.agent_code || evt.agent_name || 'agent';
                     const subTaskId = evt?.detail?.sub_task_id || '';
-                    return `${stage}|${agent}|${subTaskId || '-'}`;
+                    const taorSuffix = (stage === 'taor_loop')
+                        ? `|t${evt?.detail?.turn || 0}|${evt?.detail?.event_subtype || ''}`
+                        : '';
+                    return `${stage}|${agent}|${subTaskId || '-'}${taorSuffix}`;
                 }
 
                 sorted.forEach((evt) => {
@@ -2273,7 +2368,9 @@
                 const $area = $('#execution-log-area');
                 $area.empty();
                 renderExecutionControlPanel();
-                const events = currentWorkflowEvents || [];
+                const events = (currentWorkflowEvents || []).filter(
+                    evt => !(evt.stage === 'taor_loop' && evt?.detail?.event_subtype !== 'taor_finish')
+                );
                 const rawLogs = currentLogs || [];
                 if (!events.length && !rawLogs.length) {
                     $area.append(`<div class="text-center text-muted">${tr('app.empty.logs', 'No logs yet. Send a task to view process.')}</div>`);
@@ -2438,6 +2535,50 @@
                                 const payload = JSON.parse(evt.data || '{}');
                                 if (payload.type === 'keepalive' || payload.type === 'connected') {
                                     return;
+                                }
+                                const sk = payload.sse_kind || '';
+                                if (sk === 'llm_stream_start' || sk === 'llm_stream_delta' || sk === 'llm_stream_end') {
+                                    if (payload.request_id && payload.request_id !== currentRequestId) {
+                                        return;
+                                    }
+                                    if (sk === 'llm_stream_start') {
+                                        stopThinkingPhaseTicker();
+                                        llmStreamAccum = '';
+                                        const $tc = $('#temp-ai-message .message-content');
+                                        if ($tc.length) {
+                                            $tc.removeClass('ai-typing-indicator').html(
+                                                '<div class="taor-thinking-block" id="taor-thinking-block-live">' +
+                                                '<button class="taor-thinking-header" type="button" aria-expanded="true" ' +
+                                                'onclick="(function(btn){var b=btn.closest(\'.taor-thinking-block\');' +
+                                                'b.classList.toggle(\'collapsed\');' +
+                                                'btn.setAttribute(\'aria-expanded\',String(!b.classList.contains(\'collapsed\')));})(this)">' +
+                                                '<span class="taor-thinking-chevron">&#9660;</span>' +
+                                                '<span>' + escapeHtml(tr('app.taor.thinking', 'Thinking\u2026')) + '</span>' +
+                                                '</button>' +
+                                                '<div class="taor-thinking-body">' +
+                                                '<span class="llm-stream-chunks"></span>' +
+                                                '</div>' +
+                                                '</div>' +
+                                                '<div class="taor-final-text" id="taor-final-text-live" style="display:none;"></div>'
+                                            );
+                                        }
+                                        return;
+                                    }
+                                    if (sk === 'llm_stream_delta') {
+                                        const delta = payload.delta != null ? String(payload.delta) : '';
+                                        if (!delta) return;
+                                        llmStreamAccum += delta;
+                                        const $span = $('#temp-ai-message .message-content .llm-stream-chunks');
+                                        if ($span.length) {
+                                            $span.html(escapeHtml(llmStreamAccum).replace(/\n/g, '<br>'));
+                                            const $chat = $('#chat .chat-area');
+                                            $chat.scrollTop($chat.prop('scrollHeight'));
+                                        }
+                                        return;
+                                    }
+                                    if (sk === 'llm_stream_end') {
+                                        return;
+                                    }
                                 }
                                 // 仅展示当前 request_id 对应的协作日志
                                 if (payload.request_id) {
@@ -3168,7 +3309,7 @@
                             <div><strong>${tr('app.actionPlan.title', 'Execution Plan (Confirmation Required)')}</strong></div>
                             <div class="text-muted mb-2">${summary}</div>
                             ${planHtml}
-                            ${needDouble ? `<div class="text-warning mb-2">${tr('app.actionPlan.highRiskHint', 'High-risk actions require a second confirmation.')}</div>` : ''}
+                            ${needDouble ? `<div class="text-warning mb-2">${tr('app.actionPlan.highRiskHint', 'High-risk action — please confirm carefully.')}</div>` : ''}
                             <div class="d-flex align-items-center" style="gap:8px;">
                                 <button class="btn btn-sm btn-primary confirm-action-btn" type="button" title="${tr('app.actionPlan.confirmBtn', 'Confirm and Execute')}" aria-label="${tr('app.actionPlan.confirmBtn', 'Confirm and Execute')}">✓</button>
                                 <button class="btn btn-sm btn-outline-secondary reject-action-btn" type="button" title="${tr('app.actionPlan.rejectBtn', 'Cancel')}" aria-label="${tr('app.actionPlan.rejectBtn', 'Cancel')}">✕</button>
@@ -3185,39 +3326,7 @@
                 const $chat = $('#chat .chat-area');
                 const $card = $chat.find('.pending-action-card').last();
                 const $btn = $card.find('.confirm-action-btn');
-                function showDoubleConfirmDialog(message, onConfirm, onCancel) {
-                    const existing = $('#double-confirm-overlay');
-                    if (existing.length) existing.remove();
-                    const safeMsg = escapeHtml(String(message || tr('app.actionPlan.doubleConfirmNeeded', 'Second confirmation is required for high-risk actions.')));
-                    const html = `
-                        <div class="double-confirm-overlay" id="double-confirm-overlay">
-                            <div class="double-confirm-box" role="dialog" aria-modal="true" aria-label="${escapeHtml(tr('app.actionPlan.doubleConfirmNeeded', 'Second confirmation is required for high-risk actions.'))}">
-                                <div class="double-confirm-title">${escapeHtml(tr('app.actionPlan.highRiskHint', 'High-risk actions require a second confirmation.'))}</div>
-                                <div class="double-confirm-text">${safeMsg}</div>
-                                <div class="double-confirm-actions">
-                                    <button type="button" class="btn btn-outline-secondary double-confirm-btn" id="double-confirm-cancel-btn" title="${escapeHtml(tr('app.actionPlan.rejectBtn', 'Cancel'))}" aria-label="${escapeHtml(tr('app.actionPlan.rejectBtn', 'Cancel'))}">✕</button>
-                                    <button type="button" class="btn btn-primary double-confirm-btn" id="double-confirm-ok-btn" title="${escapeHtml(tr('app.actionPlan.confirmBtn', 'Confirm and Execute'))}" aria-label="${escapeHtml(tr('app.actionPlan.confirmBtn', 'Confirm and Execute'))}">✓</button>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    $('body').append(html);
-                    $('#double-confirm-ok-btn').on('click', function() {
-                        $('#double-confirm-overlay').remove();
-                        if (typeof onConfirm === 'function') onConfirm();
-                    });
-                    $('#double-confirm-cancel-btn').on('click', function() {
-                        $('#double-confirm-overlay').remove();
-                        if (typeof onCancel === 'function') onCancel();
-                    });
-                    $('#double-confirm-overlay').on('click', function(e) {
-                        if (e.target && e.target.id === 'double-confirm-overlay') {
-                            $('#double-confirm-overlay').remove();
-                            if (typeof onCancel === 'function') onCancel();
-                        }
-                    });
-                }
-                function sendConfirm(forceFlag) {
+                function sendConfirm() {
                     $btn.prop('disabled', true).text('…');
                     $.ajax({
                         url: '/api/confirm_actions',
@@ -3226,7 +3335,7 @@
                         data: JSON.stringify({
                             conversation_id: currentConversationId,
                             request_id: currentRequestId || '',
-                            force: !!forceFlag,
+                            force: true,
                             action_screenshots: isActionScreenshotsEnabled(),
                         }),
                         success: function(resp) {
@@ -3242,22 +3351,13 @@
                             loadMethodologies();
                         },
                         error: function(xhr) {
-                            if (!forceFlag && xhr && xhr.status === 409 && xhr.responseJSON && xhr.responseJSON.requires_double_confirmation) {
-                                const msg = xhr.responseJSON.message || tr('app.actionPlan.doubleConfirmNeeded', 'Second confirmation is required for high-risk actions.');
-                                showDoubleConfirmDialog(
-                                    msg,
-                                    function() { sendConfirm(true); },
-                                    function() { $btn.prop('disabled', false).text('✓'); }
-                                );
-                                return;
-                            }
                             const msg = (xhr && xhr.responseJSON && xhr.responseJSON.message) || tr('app.actionPlan.confirmFailed', 'Failed to execute actions.');
                             $chat.append(`<div class="chat-message ai-message"><div class="message-content"><span class="text-danger">${escapeHtml(msg)}</span></div></div>`);
                             $btn.prop('disabled', false).text('✓');
                         }
                     });
                 }
-                sendConfirm(false);
+                sendConfirm();
             }
 
             function rejectPendingActions() {
@@ -3300,6 +3400,7 @@
                                 <div id="exec-elapsed-label" class="text-muted" style="font-size:12px;"></div>
                                 <div class="text-muted" style="font-size:12px;">${et(tr('app.exec.sessionLabel', 'Session'))}: ${sidBlock}</div>
                             </div>
+                            <div id="exec-timing-breakdown" class="text-muted d-none mb-2" style="font-size:11px;line-height:1.35;" aria-live="polite"></div>
                             <div class="mb-2">
                                 <div class="text-muted" style="font-size:12px;">${et(tr('app.exec.assignedAgents', 'Assigned agents'))}</div>
                                 <div id="exec-assigned-agents-list"></div>
@@ -3334,6 +3435,9 @@
                         const elapsedLine = formatElapsedLine(resp.elapsed_ms);
                         if (elapsedLine) {
                             $('#exec-elapsed-label').text(elapsedLine);
+                        }
+                        if (resp.timing_breakdown) {
+                            updateExecTimingBreakdown(resp.timing_breakdown);
                         }
                         const report = resp.report || [];
                         if (report.length) {
@@ -3433,6 +3537,9 @@
                 adjustChatTextareaHeight();
 
                 function processWithConversationId(convId) {
+                    if (convId) {
+                        startWorkflowStream(true, true);
+                    }
                     const hasFiles = pendingChatFiles.length > 0;
                     const onSuccess = function(resp) {
                         stopThinkingPhaseTicker();
@@ -3449,7 +3556,17 @@
                             conversationExecutionSessionMap[currentConversationId] = currentExecutionSessionId;
                         }
                         const escaped = escapeHtml(resp.result || '').replace(/\n/g, '<br>');
-                        $('#temp-ai-message .message-content').html(`${escaped}`);
+                        const $tc = $('#temp-ai-message .message-content');
+                        const $block = $tc.find('#taor-thinking-block-live');
+                        if ($block.length) {
+                            $block.addClass('collapsed');
+                            $block.find('.taor-thinking-header').attr('aria-expanded', 'false');
+                            const $fin = $tc.find('#taor-final-text-live');
+                            if ($fin.length) { $fin.html(escaped).show(); }
+                            else { $tc.html(escaped); }
+                        } else {
+                            $tc.html(escaped);
+                        }
                         if (resp.cancelled) {
                             $('#chat .chat-area').append(
                                 `<div class="chat-message ai-message"><div class="message-content text-warning">${escapeHtml(tr('app.request.cancelled', 'Task cancelled. No further actions will run.'))}</div></div>`
@@ -3457,6 +3574,7 @@
                         }
                         appendTokenUsageToAiMessage($('#temp-ai-message'), resp.token_usage);
                         appendElapsedToAiMessage($('#temp-ai-message'), resp.elapsed_ms);
+                        appendTimingBreakdownToAiMessage($('#temp-ai-message'), resp.timing_breakdown);
                         $('#temp-ai-message').removeAttr('id');
                         if (resp.needs_confirmation && resp.pending_actions) {
                             renderPendingActionsCard(resp.pending_actions);

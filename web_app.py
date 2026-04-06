@@ -1,4 +1,5 @@
 import json
+import logging
 import mimetypes
 import os
 import queue
@@ -29,6 +30,9 @@ from chat_attachments import (
 from conversation_lib import ConversationLibrary
 from llm.volcengine_llm import _normalize_reasoning_effort, resolve_inference_api_key
 from method_lib import MethodologyLibrary
+from runtime.timing_breakdown import compute_timing_breakdown
+
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
@@ -43,52 +47,39 @@ execution_sessions_by_conversation: dict[str, str] = {}
 conversation_task_bookmark: dict[str, str] = {}
 
 
+def _try_uuid(s: str) -> str | None:
+    """验证字符串是否为合法 UUID，是则返回原值，否则返回 None。"""
+    try:
+        uuid.UUID(s)
+        return s
+    except ValueError:
+        return None
+
+
 def _reuse_task_id_for_parse(
     conversation_id: str, client_task_id: str, new_task: bool, bookmark: dict[str, str]
 ) -> str | None:
     """供 parse_task 沿用线程：new_task 则新 UUID；否则优先客户端 task_id，再回落书签。"""
     if new_task:
         return None
-    ct = (client_task_id or "").strip()
-    if ct:
-        try:
-            uuid.UUID(ct)
-            return ct
-        except ValueError:
-            pass
-    ex = (bookmark.get(conversation_id) or "").strip()
-    if ex:
-        try:
-            uuid.UUID(ex)
-            return ex
-        except ValueError:
-            pass
-    return None
+    return (
+        _try_uuid((client_task_id or "").strip())
+        or _try_uuid((bookmark.get(conversation_id) or "").strip())
+    )
 
 
 def _tid_for_response_non_parse(
     conversation_id: str, client_task_id: str, new_task: bool, bookmark: dict[str, str]
 ) -> str:
     """clarify / action 预览 / small_talk / 待确认消息 等使用的 task_id，并维护书签（parse_task 路径由书签在 parse 后单独写入）。"""
-    if new_task:
-        tid = str(uuid.uuid4())
-        bookmark[conversation_id] = tid
-        return tid
-    ct = (client_task_id or "").strip()
-    if ct:
-        try:
-            uuid.UUID(ct)
-            bookmark[conversation_id] = ct
-            return ct
-        except ValueError:
-            pass
-    ex = (bookmark.get(conversation_id) or "").strip()
-    if ex:
-        try:
-            uuid.UUID(ex)
-            return ex
-        except ValueError:
-            pass
+    if not new_task:
+        tid = (
+            _try_uuid((client_task_id or "").strip())
+            or _try_uuid((bookmark.get(conversation_id) or "").strip())
+        )
+        if tid:
+            bookmark[conversation_id] = tid
+            return tid
     tid = str(uuid.uuid4())
     bookmark[conversation_id] = tid
     return tid
@@ -113,6 +104,8 @@ manager.set_event_sink(publish_workflow_event)
 _DOTENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 _PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 _REGRESSION_REPORT_PATH = os.path.join(_PROJECT_ROOT, "data", "benchmarks", "latest_regression_report.json")
+_EVAL_REPORT_PATH = os.path.join(_PROJECT_ROOT, "data", "benchmarks", "latest_eval_report.json")
+_EVAL_CASES_PATH = os.path.join(_PROJECT_ROOT, "data", "benchmarks", "regression_tasks.json")
 _EXPERIENCE_METRICS_PATH = os.path.join(_PROJECT_ROOT, "data", "experience_center_metrics.json")
 _WORKSPACE_PREVIEW_MAX_BYTES = 256 * 1024
 _WORKSPACE_LIST_LIMIT_MAX = 500
@@ -150,7 +143,13 @@ def resolve_api_key() -> str:
 
 
 def _empty_token_usage() -> dict:
-    return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "llm_calls": 0}
+    return {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "llm_calls": 0,
+        "llm_wall_ms": 0,
+    }
 
 
 def _safe_read_json(path: str, default: Any):
@@ -357,38 +356,19 @@ def _elapsed_ms_since(started_at_perf: float) -> int:
         return 0
 
 
-def _is_confirmation_text(text: str) -> bool:
+def _is_confirmation_text(text: str, double: bool = False) -> bool:
     t = (text or "").strip().lower()
     if not t:
         return False
-    keywords = [
-        "确认执行",
-        "确认",
-        "继续执行",
-        "执行吧",
-        "同意执行",
-        "confirm",
-        "yes execute",
-        "execute now",
-        "go ahead",
-    ]
+    if double:
+        keywords = ["二次确认", "再次确认", "高风险确认", "最终确认", "double confirm", "second confirm", "final confirm"]
+    else:
+        keywords = ["确认执行", "确认", "继续执行", "执行吧", "同意执行", "confirm", "yes execute", "execute now", "go ahead"]
     return any(k in t for k in keywords)
 
 
 def _is_double_confirmation_text(text: str) -> bool:
-    t = (text or "").strip().lower()
-    if not t:
-        return False
-    keywords = [
-        "二次确认",
-        "再次确认",
-        "高风险确认",
-        "最终确认",
-        "double confirm",
-        "second confirm",
-        "final confirm",
-    ]
-    return any(k in t for k in keywords)
+    return _is_confirmation_text(text, double=True)
 
 
 def _finalize_action_execution(
@@ -512,6 +492,210 @@ def _finalize_react_execution(
     }
 
 
+def _json_response_small_talk_branch(
+    manager: ARIAManager,
+    conversation_manager: ConversationLibrary,
+    *,
+    conversation_id: str,
+    request_id: str,
+    client_task_id: str,
+    new_task: bool,
+    conversation_task_bookmark: dict[str, str],
+    user_plain: str,
+    detect_reason: str,
+    detect_source: str,
+    with_elapsed,
+    _json_response,
+):
+    """闲聊/寒暄：单轮 TextExecAgent（可 SSE 流式），与 process_input 原 small_talk 分支一致。"""
+    st_tid = _tid_for_response_non_parse(conversation_id, client_task_id, new_task, conversation_task_bookmark)
+    manager.current_task_id = st_tid
+    manager.push_event(
+        "small_talk_detect",
+        "success",
+        "TaskParser",
+        "识别为日常问候，切换轻量回复",
+        {"reason": detect_reason, "source": detect_source},
+    )
+    manager.push_log("TaskParser", "识别为问候/闲聊，已跳过复杂流程", "completed")
+    final_result = manager.generate_small_talk_reply(user_plain or "（用户上传了文件）")
+    manager.push_event("small_talk_reply", "success", "TextExecAgent", "已生成简洁回复")
+    manager.push_log("TextExecAgent", "简洁回复已发送", "completed")
+    logs = manager.get_execution_log()
+    workflow_events = manager.get_workflow_events()
+    _tu = manager.get_token_usage_summary()
+    conversation_manager.append_message(
+        conversation_id,
+        "assistant",
+        final_result,
+        {"logs": logs, "workflow_events": workflow_events, "token_usage": _tu, "task_id": st_tid},
+    )
+    conversation_manager.replace_workflow_events(conversation_id, workflow_events)
+    return _json_response(
+        with_elapsed(
+            {
+                "result": final_result,
+                "logs": logs,
+                "workflow_events": workflow_events,
+                "conversation_id": conversation_id,
+                "api_key_configured": True,
+                "task_id": st_tid,
+                "request_id": request_id or "",
+                "model_trace": getattr(manager, "last_model_trace", {}),
+                "token_usage": _tu,
+            }
+        )
+    )
+
+
+def _json_response_qa_only_branch(
+    manager: ARIAManager,
+    conversation_manager: ConversationLibrary,
+    *,
+    conversation_id: str,
+    request_id: str,
+    client_task_id: str,
+    new_task: bool,
+    conversation_task_bookmark: dict[str, str],
+    llm_user_input: str,
+    dialogue_context: str,
+    with_elapsed,
+    _json_response,
+):
+    """规划器判定 qa_only 且无动作：跳过后续路由 LLM 与多 Agent 瀑布流，直接流式作答。"""
+    qa_tid = _tid_for_response_non_parse(conversation_id, client_task_id, new_task, conversation_task_bookmark)
+    manager.current_task_id = qa_tid
+    manager.push_event(
+        "qa_direct",
+        "success",
+        "TextExecAgent",
+        "纯问答：已跳过多 Agent 瀑布流",
+        {"task_form": "qa_only"},
+    )
+    manager.push_log("TextExecAgent", "直接对话作答", "completed")
+    final_result = manager.generate_direct_qa_reply(llm_user_input or "", dialogue_context)
+    manager.push_event("qa_direct_reply", "success", "TextExecAgent", "已生成回答")
+    manager.push_log("TextExecAgent", "回答已发送", "completed")
+    logs = manager.get_execution_log()
+    workflow_events = manager.get_workflow_events()
+    _tu = manager.get_token_usage_summary()
+    conversation_manager.append_message(
+        conversation_id,
+        "assistant",
+        final_result,
+        {"logs": logs, "workflow_events": workflow_events, "token_usage": _tu, "task_id": qa_tid},
+    )
+    conversation_manager.replace_workflow_events(conversation_id, workflow_events)
+    return _json_response(
+        with_elapsed(
+            {
+                "result": final_result,
+                "logs": logs,
+                "workflow_events": workflow_events,
+                "conversation_id": conversation_id,
+                "api_key_configured": True,
+                "task_id": qa_tid,
+                "request_id": request_id or "",
+                "model_trace": getattr(manager, "last_model_trace", {}),
+                "token_usage": _tu,
+            }
+        )
+    )
+
+
+def _process_input_classic_waterfall(
+    manager: ARIAManager,
+    conversation_manager: ConversationLibrary,
+    conversation_id: str,
+    llm_user_input: str,
+    dialogue_context: str,
+    reuse_for_parse: str | None,
+    conversation_task_bookmark: dict[str, str],
+    request_id: str,
+    with_elapsed,
+    _json_response,
+):
+    """parse_task → 方法论匹配/学习 → 多 Agent 编排 → 落库与响应（原 process_input 主瀑布流）。"""
+    task_info = manager.parse_task(llm_user_input or "", dialogue_context, reuse_for_parse)
+    current_task_id = task_info.get("task_id", "")
+    conversation_task_bookmark[conversation_id] = current_task_id
+    manager.current_task_id = current_task_id
+
+    score, method = manager.match_methodology(task_info)
+
+    if score < 0.7:
+        if manager.should_skip_external_methodology_learning(task_info, llm_user_input or ""):
+            method = manager.local_automation_methodology_stub(task_info)
+            manager.push_event(
+                "method_learn",
+                "success",
+                "SolutionLearner",
+                "本机执行类任务，跳过外网方法论学习",
+                {
+                    "score": score,
+                    "execution_surface": task_info.get("execution_surface"),
+                },
+            )
+            manager.push_log(
+                "SolutionLearner",
+                "已跳过 learn_from_external（execution_surface=本机/微信自动化）",
+                "completed",
+            )
+        elif manager.should_reuse_methodology_without_learn(task_info, score, method):
+            manager.push_event(
+                "method_learn",
+                "success",
+                "SolutionLearner",
+                "强时效任务沿用已匹配流程模板，跳过整段外网学习",
+                {"score": score, "temporal_risk": task_info.get("temporal_risk")},
+            )
+            manager.push_log(
+                "SolutionLearner",
+                f"已跳过 learn_from_external（temporal_risk=high, score={score:.2f}）",
+                "completed",
+            )
+        else:
+            method = manager.learn_from_external(task_info)
+
+    orchestration_payload = manager.orchestration.execute_pipeline(task_info, method, dialogue_context)
+    agents = orchestration_payload.get("agents", {})
+    check_payload = orchestration_payload.get("check_payload", {})
+    final_result = check_payload.get("final_result") if isinstance(check_payload, dict) else check_payload
+
+    manager.save_methodology(task_info, method, check_payload)
+    manager.destroy_agents(agents)
+
+    logs = manager.get_execution_log()
+    workflow_events = manager.get_workflow_events()
+    _tu = manager.get_token_usage_summary()
+    conversation_manager.append_message(
+        conversation_id,
+        "assistant",
+        final_result,
+        {"logs": logs, "workflow_events": workflow_events, "token_usage": _tu, "task_id": current_task_id},
+    )
+    conversation_manager.replace_workflow_events(conversation_id, workflow_events)
+
+    return (
+        _json_response(
+            with_elapsed(
+                {
+                    "result": final_result,
+                    "logs": logs,
+                    "workflow_events": workflow_events,
+                    "conversation_id": conversation_id,
+                    "api_key_configured": True,
+                    "task_id": current_task_id,
+                    "request_id": request_id or "",
+                    "model_trace": getattr(manager, "last_model_trace", {}),
+                    "token_usage": _tu,
+                }
+            )
+        ),
+        agents,
+    )
+
+
 @app.route("/api/check_api_key")
 def check_api_key():
     # 仅返回是否已配置，不返回任何密钥片段
@@ -521,21 +705,16 @@ def check_api_key():
 @app.route("/api/workspace_file", methods=["GET"])
 def workspace_file():
     """只读下载 ARIA 工作区内的相对路径文件（供 file_write 落盘后在浏览器拉取）。"""
-    raw = (request.args.get("path") or "").strip().replace("\\", "/")
-    if not raw or ".." in raw or raw.startswith("/"):
+    raw = (request.args.get("path") or "").strip()
+    if not raw:
         return jsonify({"success": False, "message": "invalid_path"}), 400
+    p, err = _resolve_workspace_path(raw)
+    if err:
+        return err
     try:
-        p = manager._ensure_safe_path(raw)
         if not p.is_file():
             return jsonify({"success": False, "message": "not_found"}), 404
-        return send_file(
-            str(p),
-            as_attachment=True,
-            download_name=p.name,
-            mimetype="application/octet-stream",
-        )
-    except ValueError:
-        return jsonify({"success": False, "message": "path_not_allowed"}), 403
+        return send_file(str(p), as_attachment=True, download_name=p.name, mimetype="application/octet-stream")
     except Exception:
         return jsonify({"success": False, "message": "read_error"}), 500
 
@@ -543,22 +722,17 @@ def workspace_file():
 @app.route("/api/workspace_asset", methods=["GET"])
 def workspace_asset():
     """预览 ARIA 工作区内附件（用于聊天消息中的图片缩略图/文件直链）。"""
-    raw = (request.args.get("path") or "").strip().replace("\\", "/")
-    if not raw or ".." in raw or raw.startswith("/"):
+    raw = (request.args.get("path") or "").strip()
+    if not raw:
         return jsonify({"success": False, "message": "invalid_path"}), 400
+    p, err = _resolve_workspace_path(raw)
+    if err:
+        return err
     try:
-        p = manager._ensure_safe_path(raw)
         if not p.is_file():
             return jsonify({"success": False, "message": "not_found"}), 404
         guessed, _ = mimetypes.guess_type(str(p))
-        return send_file(
-            str(p),
-            as_attachment=False,
-            mimetype=guessed or "application/octet-stream",
-            conditional=True,
-        )
-    except ValueError:
-        return jsonify({"success": False, "message": "path_not_allowed"}), 403
+        return send_file(str(p), as_attachment=False, mimetype=guessed or "application/octet-stream", conditional=True)
     except Exception:
         return jsonify({"success": False, "message": "read_error"}), 500
 
@@ -701,6 +875,12 @@ def process_input():
     def with_elapsed(payload: dict) -> dict:
         out = dict(payload or {})
         out["elapsed_ms"] = _elapsed_ms_since(request_started_at)
+        _tu = manager.get_token_usage_summary()
+        out["timing_breakdown"] = compute_timing_breakdown(
+            elapsed_ms=out["elapsed_ms"],
+            llm_ms=int(_tu.get("llm_wall_ms", 0) or 0),
+            local_action_ms=0,
+        )
         return out
 
     is_multipart = bool(request.content_type and "multipart/form-data" in request.content_type.lower())
@@ -746,6 +926,9 @@ def process_input():
     elif not conversation_manager.get_conversation(conversation_id):
         conversation = conversation_manager.create_conversation("新会话")
         conversation_id = conversation.get("conversation_id")
+
+    # 通知 KAIROS 记录用户活动（重置 AutoDream 空闲计时器）
+    manager.record_kairos_activity()
 
     attachment_records: list[dict] = []
     try:
@@ -841,7 +1024,7 @@ def process_input():
         new_task = bool(payload.get("new_task"))
         client_task_id = str(payload.get("task_id") or "").strip()
         _rm = payload.get("react_mode") if isinstance(payload, dict) else None
-        react_mode = _rm is True or (isinstance(_rm, str) and _rm.strip().lower() in ("1", "true", "yes", "on"))
+        react_mode_user = _rm is True or (isinstance(_rm, str) and _rm.strip().lower() in ("1", "true", "yes", "on"))
         manager.set_workspace_mode("aria")
         dialogue_context = conversation_manager.format_dialogue_context_for_prompt(conversation_id)
         reuse_for_parse = _reuse_task_id_for_parse(
@@ -885,59 +1068,20 @@ def process_input():
             pending = pending_action_plans.get(conversation_id, {})
             actions = pending.get("actions") or []
             if _is_confirmation_text(user_input or ""):
-                pending_risk_level = str(pending.get("risk_level") or manager.evaluate_action_risk_level(actions))
-                if pending_risk_level == "high":
-                    pending_action_plans[conversation_id] = pending
-                    msg = "检测到高风险动作。请点击确认按钮完成二次确认（不再使用输入文字二次确认）。"
-                    manager.push_event("action_double_confirm_required", "warning", "TaskParser", msg)
-                    manager.push_log("TaskParser", msg, "warning")
-                    logs = manager.get_execution_log()
-                    workflow_events = manager.get_workflow_events()
-                    _tu = manager.get_token_usage_summary()
-                    conversation_manager.append_message(
-                        conversation_id,
-                        "assistant",
-                        msg,
-                        {
-                            "logs": logs,
-                            "workflow_events": workflow_events,
-                            "pending_actions": {"actions": actions, "requires_double_confirmation": True},
-                            "token_usage": _tu,
-                            "task_id": tid,
-                        },
-                    )
-                    conversation_manager.replace_workflow_events(conversation_id, workflow_events)
-                    return _json_response(
-                        with_elapsed(
-                            {
-                                "result": msg,
-                                "logs": logs,
-                                "workflow_events": workflow_events,
-                                "conversation_id": conversation_id,
-                                "api_key_configured": True,
-                                "task_id": tid,
-                                "request_id": request_id or "",
-                                "pending_actions": {"actions": actions, "requires_double_confirmation": True},
-                                "needs_confirmation": True,
-                                "needs_double_confirmation": True,
-                                "model_trace": getattr(manager, "last_model_trace", {}),
-                                "token_usage": _tu,
-                            }
-                        )
-                    )
                 pending_action_plans.pop(conversation_id, None)
                 if pending.get("react_mode"):
                     return jsonify(
                         with_elapsed(
                             _finalize_react_execution(
-                            conversation_id,
-                            request_id or "",
-                            str(pending.get("user_goal") or ""),
-                            str(pending.get("dialogue_context") or ""),
-                            plan_summary=str(pending.get("summary") or ""),
-                            plan_risk_level=str(pending.get("risk_level") or "medium"),
-                            thread_task_id=tid,
-                            action_screenshots=action_screenshots,
+                                conversation_id,
+                                request_id or "",
+                                str(pending.get("user_goal") or ""),
+                                str(pending.get("dialogue_context") or ""),
+                                plan_summary=str(pending.get("summary") or ""),
+                                plan_risk_level=str(pending.get("risk_level") or "medium"),
+                                thread_task_id=tid,
+                                action_screenshots=action_screenshots,
+                                react_computer_use_vision=bool(pending.get("react_computer_use_vision")),
                             )
                         )
                     )
@@ -962,7 +1106,68 @@ def process_input():
             ):
                 pending_action_plans.pop(conversation_id, None)
 
+        # 短问候/感谢等：跳过 plan_actions（TaskParser 大块 JSON 不流式），首包即可走 TextExecAgent 流式
+        if not attachment_records:
+            fast = manager.classify_interaction_mode_heuristic(llm_user_input or "")
+            if isinstance(fast, dict) and fast.get("mode") == "small_talk":
+                return _json_response_small_talk_branch(
+                    manager,
+                    conversation_manager,
+                    conversation_id=conversation_id,
+                    request_id=request_id or "",
+                    client_task_id=client_task_id,
+                    new_task=new_task,
+                    conversation_task_bookmark=conversation_task_bookmark,
+                    user_plain=user_plain,
+                    detect_reason=str(fast.get("reason") or ""),
+                    detect_source=str(fast.get("source") or "heuristic"),
+                    with_elapsed=with_elapsed,
+                    _json_response=_json_response,
+                )
+
+        # TAOR 模式下跳过 plan_actions（节省 1 次 LLM 调用），直接进入 TAOR 循环
+        if os.getenv("ARIA_TAOR_MODE", "0").strip().lower() in ("1", "true", "yes"):
+            taor_result = manager.run_taor_pipeline(
+                user_input=llm_user_input or "",
+                dialogue_context=dialogue_context,
+                conversation_id=conversation_id,
+            )
+            final_result = taor_result.get("final_result", "")
+            logs = manager.get_execution_log()
+            workflow_events = manager.get_workflow_events()
+            _tu = manager.get_token_usage_summary()
+            conversation_manager.append_message(
+                conversation_id,
+                "assistant",
+                final_result,
+                {"logs": logs, "workflow_events": workflow_events, "token_usage": _tu},
+            )
+            conversation_manager.replace_workflow_events(conversation_id, workflow_events)
+            tid = _tid_for_response_non_parse(conversation_id, client_task_id, new_task, conversation_task_bookmark)
+            manager.current_task_id = tid
+            return _json_response(
+                with_elapsed(
+                    {
+                        "result": final_result,
+                        "logs": logs,
+                        "workflow_events": workflow_events,
+                        "conversation_id": conversation_id,
+                        "api_key_configured": True,
+                        "task_id": tid,
+                        "request_id": request_id or "",
+                        "needs_confirmation": False,
+                        "model_trace": getattr(manager, "last_model_trace", {}),
+                        "token_usage": _tu,
+                        "is_success": taor_result.get("is_success", True),
+                    }
+                )
+            )
+
+        manager.push_event(
+            "task_parse", "running", "TaskParser", "正在解析任务并规划执行步骤…", {}
+        )
         plan = manager.plan_actions(llm_user_input or "", dialogue_context)
+        react_mode_aria = bool(plan.get("react_recommended")) if isinstance(plan, dict) else False
         if plan.get("mode") == "clarify":
             tid = _tid_for_response_non_parse(conversation_id, client_task_id, new_task, conversation_task_bookmark)
             manager.current_task_id = tid
@@ -1007,16 +1212,50 @@ def process_input():
                     }
                 )
             )
-        if plan.get("mode") == "action" and (plan.get("actions") or react_mode):
+        if plan.get("mode") == "action" and (plan.get("actions") or react_mode_user or react_mode_aria):
             tid = _tid_for_response_non_parse(conversation_id, client_task_id, new_task, conversation_task_bookmark)
             manager.current_task_id = tid
-            # 若计划包含 computer_screenshot，自动升级为 ReAct 模式（截图需要视觉反馈循环）
+            react_mode = bool(react_mode_user or react_mode_aria)
+            # 若计划包含 computer_*，自动升级为 ReAct（需逐步观察）；桌面截图推理建议开视觉
             _plan_actions = plan.get("actions") or []
             _computer_use_types = {"computer_screenshot", "computer_click", "computer_double_click",
                                    "computer_type", "computer_key", "computer_drag", "computer_scroll"}
-            if not react_mode and any(a.get("type") in _computer_use_types for a in _plan_actions):
+            _has_computer_use = any(
+                isinstance(a, dict) and a.get("type") in _computer_use_types for a in _plan_actions
+            )
+            _computer_use_count = sum(
+                1 for a in _plan_actions
+                if isinstance(a, dict) and a.get("type") in _computer_use_types
+            )
+            # 仅当 computer_use 动作 ≥2 步（多步状态依赖）或 LLM 明确建议 ReAct 时才自动升级；
+            # 单步 computer_use（如一次截图确认）不强制走 ReAct 循环
+            if not react_mode and _has_computer_use and (_computer_use_count >= 2 or react_mode_aria):
                 react_mode = True
-                payload["react_computer_use_vision"] = True
+            _rcv_payload = False
+            if isinstance(payload, dict):
+                _rcv_payload = (payload.get("react_computer_use_vision") is True) or (
+                    isinstance(payload.get("react_computer_use_vision"), str)
+                    and payload.get("react_computer_use_vision", "").strip().lower() in ("1", "true", "yes", "on")
+                )
+            if react_mode:
+                if _has_computer_use:
+                    react_computer_use_vision = True
+                else:
+                    react_computer_use_vision = _rcv_payload or bool(
+                        plan.get("react_computer_use_vision_recommended")
+                    )
+            else:
+                react_computer_use_vision = _rcv_payload
+            if isinstance(plan, dict):
+                plan["react_user_forced"] = bool(react_mode_user)
+                if react_mode_user:
+                    plan["react_mode_source"] = "user"
+                elif react_mode_aria:
+                    plan["react_mode_source"] = "aria"
+                elif _has_computer_use:
+                    plan["react_mode_source"] = "computer"
+                else:
+                    plan["react_mode_source"] = "aria"
             plan_risk_level = manager.evaluate_action_risk_level(plan.get("actions") or [])
             if react_mode and plan_risk_level == "safe":
                 plan_risk_level = "medium"
@@ -1043,15 +1282,7 @@ def process_input():
                 "created_at": time.time(),
                 "double_confirm_ready": False,
                 "react_mode": bool(react_mode),
-                "react_computer_use_vision": (
-                    (payload.get("react_computer_use_vision") is True)
-                    or (
-                        isinstance(payload.get("react_computer_use_vision"), str)
-                        and payload.get("react_computer_use_vision", "").strip().lower() in ("1", "true", "yes", "on")
-                    )
-                )
-                if isinstance(payload, dict)
-                else False,
+                "react_computer_use_vision": bool(react_computer_use_vision),
                 "user_goal": llm_user_input or "",
                 "dialogue_context": dialogue_context,
             }
@@ -1107,161 +1338,53 @@ def process_input():
                 )
             )
 
-        route = manager.classify_interaction_mode(llm_user_input or "")
-        if route.get("mode") == "small_talk":
-            st_tid = _tid_for_response_non_parse(conversation_id, client_task_id, new_task, conversation_task_bookmark)
-            manager.current_task_id = st_tid
-            manager.push_event(
-                "small_talk_detect",
-                "success",
-                "TaskParser",
-                "识别为日常问候，切换轻量回复",
-                {"reason": route.get("reason", ""), "source": route.get("source", "heuristic")},
-            )
-            manager.push_log("TaskParser", "识别为问候/闲聊，已跳过复杂流程", "completed")
-            final_result = manager.generate_small_talk_reply(user_plain or "（用户上传了文件）")
-            manager.push_event("small_talk_reply", "success", "TextExecAgent", "已生成简洁回复")
-            manager.push_log("TextExecAgent", "简洁回复已发送", "completed")
-            logs = manager.get_execution_log()
-            workflow_events = manager.get_workflow_events()
-            _tu = manager.get_token_usage_summary()
-            conversation_manager.append_message(
-                conversation_id,
-                "assistant",
-                final_result,
-                {"logs": logs, "workflow_events": workflow_events, "token_usage": _tu, "task_id": st_tid},
-            )
-            conversation_manager.replace_workflow_events(conversation_id, workflow_events)
-            return _json_response(
-                with_elapsed(
-                    {
-                        "result": final_result,
-                        "logs": logs,
-                        "workflow_events": workflow_events,
-                        "conversation_id": conversation_id,
-                        "api_key_configured": True,
-                        "task_id": st_tid,
-                        "request_id": request_id or "",
-                        "model_trace": getattr(manager, "last_model_trace", {}),
-                        "token_usage": _tu,
-                    }
-                )
-            )
-
-        # TAOR 模式：特性标志 ARIA_TAOR_MODE=1 时启用自主执行循环，跳过 7 步瀑布流
-        import os as _os
-        if _os.getenv("ARIA_TAOR_MODE", "0").strip().lower() in ("1", "true", "yes"):
-            taor_result = manager.run_taor_pipeline(
-                user_input=llm_user_input or "",
-                dialogue_context=dialogue_context,
+        if plan.get("mode") == "small_talk" and not (plan.get("actions") or []):
+            return _json_response_small_talk_branch(
+                manager,
+                conversation_manager,
                 conversation_id=conversation_id,
+                request_id=request_id or "",
+                client_task_id=client_task_id,
+                new_task=new_task,
+                conversation_task_bookmark=conversation_task_bookmark,
+                user_plain=user_plain,
+                detect_reason=str(plan.get("summary") or "planner_small_talk"),
+                detect_source="planner",
+                with_elapsed=with_elapsed,
+                _json_response=_json_response,
             )
-            final_result = taor_result.get("final_result", "")
-            logs = manager.get_execution_log()
-            workflow_events = manager.get_workflow_events()
-            _tu = manager.get_token_usage_summary()
-            conversation_manager.append_message(
-                conversation_id,
-                "assistant",
-                final_result,
-                {"logs": logs, "workflow_events": workflow_events, "token_usage": _tu},
-            )
-            conversation_manager.replace_workflow_events(conversation_id, workflow_events)
-            return _json_response(
-                with_elapsed(
-                    {
-                        "result": final_result,
-                        "logs": logs,
-                        "workflow_events": workflow_events,
-                        "token_usage": _tu,
-                        "taor_mode": True,
-                        "tool_trace": taor_result.get("tool_trace", []),
-                    }
-                )
+        if (
+            plan.get("mode") == "qa"
+            and not (plan.get("actions") or [])
+            and str(plan.get("task_form") or "").strip().lower() == "qa_only"
+        ):
+            return _json_response_qa_only_branch(
+                manager,
+                conversation_manager,
+                conversation_id=conversation_id,
+                request_id=request_id or "",
+                client_task_id=client_task_id,
+                new_task=new_task,
+                conversation_task_bookmark=conversation_task_bookmark,
+                llm_user_input=llm_user_input or "",
+                dialogue_context=dialogue_context,
+                with_elapsed=with_elapsed,
+                _json_response=_json_response,
             )
 
-        task_info = manager.parse_task(llm_user_input or "", dialogue_context, reuse_for_parse)
-        current_task_id = task_info.get("task_id", "")
-        conversation_task_bookmark[conversation_id] = current_task_id
-        manager.current_task_id = current_task_id
-
-        # 匹配方法论
-        score, method = manager.match_methodology(task_info)
-
-        # 低于 0.7 通常重新学习；强时效任务若已有可用流程模板（分数 ≥ ARIA_TEMPORAL_METHOD_MATCH_FLOOR）则跳过以省 Token
-        if score < 0.7:
-            if manager.should_skip_external_methodology_learning(task_info, llm_user_input or ""):
-                method = manager.local_automation_methodology_stub(task_info)
-                manager.push_event(
-                    "method_learn",
-                    "success",
-                    "SolutionLearner",
-                    "本机执行类任务，跳过外网方法论学习",
-                    {
-                        "score": score,
-                        "execution_surface": task_info.get("execution_surface"),
-                    },
-                )
-                manager.push_log(
-                    "SolutionLearner",
-                    "已跳过 learn_from_external（execution_surface=本机/微信自动化）",
-                    "completed",
-                )
-            elif manager.should_reuse_methodology_without_learn(task_info, score, method):
-                manager.push_event(
-                    "method_learn",
-                    "success",
-                    "SolutionLearner",
-                    "强时效任务沿用已匹配流程模板，跳过整段外网学习",
-                    {"score": score, "temporal_risk": task_info.get("temporal_risk")},
-                )
-                manager.push_log(
-                    "SolutionLearner",
-                    f"已跳过 learn_from_external（temporal_risk=high, score={score:.2f}）",
-                    "completed",
-                )
-            else:
-                method = manager.learn_from_external(task_info)
-
-        # 多 Agent 编排（runtime facade）
-        orchestration_payload = manager.orchestration.execute_pipeline(task_info, method, dialogue_context)
-        agents = orchestration_payload.get("agents", {})
-        check_payload = orchestration_payload.get("check_payload", {})
-        final_result = check_payload.get("final_result") if isinstance(check_payload, dict) else check_payload
-
-        # 保存方法论
-        manager.save_methodology(task_info, method, check_payload)
-
-        # 销毁Agent
-        manager.destroy_agents(agents)
-
-        # 获取执行日志
-        logs = manager.get_execution_log()
-        workflow_events = manager.get_workflow_events()
-        _tu = manager.get_token_usage_summary()
-        conversation_manager.append_message(
+        resp, agents = _process_input_classic_waterfall(
+            manager,
+            conversation_manager,
             conversation_id,
-            "assistant",
-            final_result,
-            {"logs": logs, "workflow_events": workflow_events, "token_usage": _tu, "task_id": current_task_id},
+            llm_user_input or "",
+            dialogue_context,
+            reuse_for_parse,
+            conversation_task_bookmark,
+            request_id or "",
+            with_elapsed,
+            _json_response,
         )
-        conversation_manager.replace_workflow_events(conversation_id, workflow_events)
-
-        return _json_response(
-            with_elapsed(
-                {
-                    "result": final_result,
-                    "logs": logs,
-                    "workflow_events": workflow_events,
-                    "conversation_id": conversation_id,
-                    "api_key_configured": True,
-                    "task_id": current_task_id,
-                    "request_id": request_id or "",
-                    "model_trace": getattr(manager, "last_model_trace", {}),
-                    "token_usage": _tu,
-                }
-            )
-        )
+        return resp
     except TaskCancelledError:
         cancelled_text = "任务已中止。你可以调整问题后重新发起。"
         logs = manager.get_execution_log()
@@ -1298,23 +1421,45 @@ def process_input():
         ex_tid = (
             conversation_task_bookmark.get(conversation_id) or getattr(manager, "current_task_id", "") or ""
         ).strip()
+        logger.exception("process_input failed conversation_id=%s error_type=%s", conversation_id, type(e).__name__)
+        snap_logs: list = []
+        snap_events: list = []
+        try:
+            snap_logs = list(manager.get_execution_log() or [])
+        except Exception:
+            pass
+        try:
+            snap_events = list(manager.get_workflow_events() or [])
+        except Exception:
+            pass
         conversation_manager.append_message(
             conversation_id,
             "assistant",
             err,
-            {"logs": [], "workflow_events": [], "token_usage": _tu, "task_id": ex_tid},
+            {
+                "logs": snap_logs,
+                "workflow_events": snap_events,
+                "token_usage": _tu,
+                "task_id": ex_tid,
+                "error_type": type(e).__name__,
+            },
         )
+        try:
+            conversation_manager.replace_workflow_events(conversation_id, snap_events)
+        except Exception:
+            pass
         return _json_response(
             with_elapsed(
                 {
                     "result": err,
-                    "logs": [],
-                    "workflow_events": [],
+                    "logs": snap_logs,
+                    "workflow_events": snap_events,
                     "conversation_id": conversation_id,
                     "api_key_configured": True,
                     "task_id": ex_tid,
                     "request_id": request_id or "",
                     "token_usage": _tu,
+                    "error_type": type(e).__name__,
                 }
             )
         )
@@ -1352,20 +1497,8 @@ def confirm_actions():
         pending_action_plans.pop(conversation_id, None)
         return jsonify({"success": True, "message": "已取消执行", "rejected": True})
 
-    force = bool(data.get("force"))
     actions = pending.get("actions") or []
     risk_level = str(pending.get("risk_level") or manager.evaluate_action_risk_level(actions))
-    if risk_level == "high" and not force:
-        pending["double_confirm_ready"] = True
-        pending_action_plans[conversation_id] = pending
-        return jsonify(
-            {
-                "success": False,
-                "message": "检测到高风险动作，请二次确认后执行",
-                "requires_double_confirmation": True,
-                "pending_actions": {"actions": actions, "requires_double_confirmation": True},
-            }
-        ), 409
 
     pending_action_plans.pop(conversation_id, None)
     btid = (conversation_task_bookmark.get(conversation_id) or "").strip()
@@ -1917,6 +2050,150 @@ def get_application_capabilities(app_id):
         "app_name": app.app_name,
         "capabilities": capabilities,
     })
+
+
+# ------------------------------------------------------------------ #
+# KAIROS API — 定时触发 / AutoDream / 状态查询                          #
+# ------------------------------------------------------------------ #
+
+@app.route("/api/kairos/status", methods=["GET"])
+def kairos_status():
+    """返回 KAIROS 引擎运行状态。"""
+    if manager.kairos is None:
+        return jsonify({"running": False, "message": "KAIROS 未启用（设置 ARIA_KAIROS_ENABLED=1）"})
+    return jsonify({"success": True, **manager.kairos.get_status()})
+
+
+@app.route("/api/triggers", methods=["GET"])
+def list_triggers():
+    """列出所有定时触发器。"""
+    if manager.kairos is None:
+        return jsonify({"success": False, "message": "KAIROS 未启用"}), 400
+    tasks = manager.kairos.scheduler.list_tasks()
+    return jsonify({"success": True, "triggers": tasks, "count": len(tasks)})
+
+
+@app.route("/api/triggers/create", methods=["POST"])
+def create_trigger():
+    """
+    创建定时触发器。
+
+    Body: {"cron": "0 9 * * 1-5", "prompt": "检查今日待办", "recurring": true, "durable": true}
+    """
+    if manager.kairos is None:
+        return jsonify({"success": False, "message": "KAIROS 未启用（设置 ARIA_KAIROS_ENABLED=1）"}), 400
+    data = request.get_json(silent=True) or {}
+    cron = str(data.get("cron") or "").strip()
+    prompt = str(data.get("prompt") or "").strip()
+    if not cron or not prompt:
+        return jsonify({"success": False, "message": "cron 和 prompt 为必填项"}), 400
+    recurring = bool(data.get("recurring", True))
+    durable = bool(data.get("durable", True))
+    try:
+        task_id = manager.kairos.scheduler.create(cron, prompt, recurring=recurring, durable=durable)
+        return jsonify({"success": True, "task_id": task_id, "message": f"触发器 {task_id} 已创建"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/api/triggers/<task_id>", methods=["DELETE"])
+def delete_trigger(task_id: str):
+    """删除定时触发器。"""
+    if manager.kairos is None:
+        return jsonify({"success": False, "message": "KAIROS 未启用"}), 400
+    deleted = manager.kairos.scheduler.delete(task_id)
+    if deleted:
+        return jsonify({"success": True, "message": f"触发器 {task_id} 已删除"})
+    return jsonify({"success": False, "message": f"触发器 {task_id} 不存在"}), 404
+
+
+@app.route("/api/dream/run", methods=["POST"])
+def run_dream():
+    """手动触发一次 AutoDream 周期。"""
+    if manager.kairos is None:
+        return jsonify({"success": False, "message": "KAIROS 未启用（设置 ARIA_KAIROS_ENABLED=1）"}), 400
+    result = manager.kairos.dream_engine.run_dream_cycle()
+    return jsonify(result)
+
+
+@app.route("/api/eval/report", methods=["GET"])
+def eval_report():
+    """返回最新 Pass@k 评估报告快照。"""
+    data = _safe_read_json(_EVAL_REPORT_PATH, {})
+    if not data:
+        return jsonify({"available": False, "message": "尚未运行评估，请先调用 /api/eval/run"}), 404
+    suite = data.get("suite") or {}
+    return jsonify({
+        "available": True,
+        "generated_at": data.get("generated_at", ""),
+        "k": data.get("k", 1),
+        "avg_pass_at_k": suite.get("avg_pass_at_k", 0.0),
+        "avg_pass_rate": suite.get("avg_pass_rate", 0.0),
+        "avg_score": suite.get("avg_score", 0.0),
+        "avg_latency_ms": suite.get("avg_latency_ms", 0.0),
+        "total_cases": suite.get("total_cases", 0),
+        "perfect_consistency_cases": suite.get("perfect_consistency_cases", 0),
+        "zero_pass_cases": suite.get("zero_pass_cases", 0),
+        "by_category": suite.get("by_category", {}),
+        "by_difficulty": suite.get("by_difficulty", {}),
+        "transcript_summary": data.get("transcript_summary", {}),
+        "cases": data.get("cases", []),
+    })
+
+
+@app.route("/api/eval/run", methods=["POST"])
+def eval_run():
+    """触发一次 Pass@k 评估（在后台线程执行）。
+
+    Body (JSON, all optional):
+        k           : int   trials per case (default 3 for web, max 10)
+        categories  : list  filter by category
+        save_transcripts: bool (default true)
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        k = max(1, min(10, int(body.get("k", 3))))
+        categories = body.get("categories") or None
+        save_transcripts = bool(body.get("save_transcripts", True))
+
+        cases_raw = _safe_read_json(_EVAL_CASES_PATH, [])
+        if not isinstance(cases_raw, list) or not cases_raw:
+            return jsonify({"success": False, "message": "benchmark cases 文件不存在或为空"}), 400
+
+        # Run in background thread to avoid blocking SSE/Flask workers
+        def _run():
+            try:
+                from scripts.run_evaluation import run_evaluation
+                run_evaluation(
+                    manager=manager,
+                    cases=cases_raw,
+                    k=k,
+                    categories=list(categories) if categories else None,
+                    save_transcripts=save_transcripts,
+                )
+            except Exception as exc:
+                logger.warning("eval_run background error: %s", exc)
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        return jsonify({
+            "success": True,
+            "message": f"评估已启动（k={k}, categories={categories or 'all'}），完成后可通过 /api/eval/report 查看结果",
+            "k": k,
+            "categories": categories,
+            "total_cases": len(cases_raw),
+        })
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/api/eval/cases", methods=["GET"])
+def eval_cases():
+    """返回当前 benchmark cases 列表（不执行）。"""
+    cases = _safe_read_json(_EVAL_CASES_PATH, [])
+    if not isinstance(cases, list):
+        return jsonify({"cases": [], "total": 0})
+    return jsonify({"cases": cases, "total": len(cases)})
 
 
 if __name__ == "__main__":

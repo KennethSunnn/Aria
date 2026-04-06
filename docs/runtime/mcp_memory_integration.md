@@ -13,14 +13,14 @@ The server exposes four tools:
 
 Data is persisted through ARIA long-term memory (`data/methodology/methodologies.json`).
 
-## Project MCP Config
+## MCP client config
 
-Project-scoped MCP config is stored in `.cursor/mcp.json`:
+外部 MCP 客户端（编辑器或 CLI）可将下列片段写入其 MCP 配置；server 名 **`aria-memory`**，启动方式 **`python -m memory.mcp_memory_server`**（在仓库根目录、已激活 venv 下执行）。
 
 ```json
 {
   "mcpServers": {
-    "memory": {
+    "aria-memory": {
       "command": "python",
       "args": ["-m", "memory.mcp_memory_server"]
     }

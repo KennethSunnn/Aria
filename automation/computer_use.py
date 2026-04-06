@@ -92,6 +92,16 @@ def resolve_screen_point(params: dict[str, Any], *, metrics: dict[str, int] | No
         return None
 
 
+def foreground_window_title_hint_for_model() -> str:
+    """供模型纠错用，截断前台标题避免泄露过长窗口名。"""
+    t = foreground_window_title().strip()
+    if not t:
+        return ""
+    if len(t) > 64:
+        return t[:32] + "…"
+    return t
+
+
 def foreground_window_title() -> str:
     if sys.platform != "win32":
         return ""
@@ -183,14 +193,63 @@ def capability_summary_for_planner() -> str:
     )
 
 
+def _computer_diagnostic(
+    *,
+    error_kind: str,
+    params: dict[str, Any] | None = None,
+    resolved_point: tuple[int, int] | None = None,
+    allowlist_block: bool | None = None,
+    block_detail: str = "",
+) -> dict[str, Any]:
+    m = virtual_screen_metrics()
+    out: dict[str, Any] = {
+        "error_kind": error_kind,
+        "virtual_screen": dict(m),
+        "coord_space": str((params or {}).get("coord_space") or "absolute"),
+        "foreground_title_hint": foreground_window_title_hint_for_model(),
+    }
+    if resolved_point is not None:
+        x, y = resolved_point
+        out["resolved_pixel"] = {"x": x, "y": y}
+        out["coords_out_of_virtual_screen"] = not (
+            m["left"] <= x < m["left"] + m["width"] and m["top"] <= y < m["top"] + m["height"]
+        )
+    if allowlist_block is not None:
+        out["allowlist_or_policy_blocked"] = allowlist_block
+    if block_detail:
+        out["block_detail"] = block_detail
+    return out
+
+
 def run_click(params: dict[str, Any], *, button: str = "left", clicks: int = 1) -> dict[str, Any]:
     pt = resolve_screen_point(params)
     if not pt:
-        return {"success": False, "message": "bad_coordinates", "stderr": "missing_or_invalid_x_y"}
+        return {
+            "success": False,
+            "message": "bad_coordinates",
+            "stderr": "missing_or_invalid_x_y",
+            "computer_diagnostic": _computer_diagnostic(
+                error_kind="bad_coordinates",
+                params=params,
+                resolved_point=None,
+            ),
+        }
     x, y = pt
     ok, reason = ensure_mutation_allowed(x, y)
     if not ok:
-        return {"success": False, "message": reason, "stderr": reason}
+        pol = "allow_regions" in reason or "outside_allow" in reason
+        return {
+            "success": False,
+            "message": reason,
+            "stderr": reason,
+            "computer_diagnostic": _computer_diagnostic(
+                error_kind="policy_blocked",
+                params=params,
+                resolved_point=(x, y),
+                allowlist_block=pol,
+                block_detail=reason,
+            ),
+        }
     try:
         pg = _import_pyautogui()
         pg.moveTo(x, y, duration=0.15)
@@ -200,17 +259,46 @@ def run_click(params: dict[str, Any], *, button: str = "left", clicks: int = 1) 
             pg.click(x, y, button=button)
         return {"success": True, "message": "computer_click_ok", "stdout": f"clicked_at=({x},{y}) button={button} clicks={clicks}"}
     except Exception as e:
-        return {"success": False, "message": "click_failed", "stderr": str(e)}
+        return {
+            "success": False,
+            "message": "click_failed",
+            "stderr": str(e),
+            "computer_diagnostic": _computer_diagnostic(
+                error_kind="execution_exception",
+                params=params,
+                resolved_point=(x, y),
+            ),
+        }
 
 
 def run_move(params: dict[str, Any]) -> dict[str, Any]:
     pt = resolve_screen_point(params)
     if not pt:
-        return {"success": False, "message": "bad_coordinates", "stderr": "missing_or_invalid_x_y"}
+        return {
+            "success": False,
+            "message": "bad_coordinates",
+            "stderr": "missing_or_invalid_x_y",
+            "computer_diagnostic": _computer_diagnostic(
+                error_kind="bad_coordinates",
+                params=params,
+            ),
+        }
     x, y = pt
     ok, reason = ensure_mutation_allowed(x, y)
     if not ok:
-        return {"success": False, "message": reason, "stderr": reason}
+        pol = "allow_regions" in reason or "outside_allow" in reason
+        return {
+            "success": False,
+            "message": reason,
+            "stderr": reason,
+            "computer_diagnostic": _computer_diagnostic(
+                error_kind="policy_blocked",
+                params=params,
+                resolved_point=(x, y),
+                allowlist_block=pol,
+                block_detail=reason,
+            ),
+        }
     try:
         pg = _import_pyautogui()
         dur = float(params.get("duration") or 0.2)
@@ -225,12 +313,29 @@ def run_drag(params: dict[str, Any]) -> dict[str, Any]:
     p1 = resolve_screen_point(params, metrics=m)
     p2 = resolve_screen_point({"x": params.get("x2"), "y": params.get("y2"), "coord_space": params.get("coord_space") or "absolute"}, metrics=m)
     if not p1 or not p2:
-        return {"success": False, "message": "bad_coordinates", "stderr": "need x,y,x2,y2"}
+        return {
+            "success": False,
+            "message": "bad_coordinates",
+            "stderr": "need x,y,x2,y2",
+            "computer_diagnostic": _computer_diagnostic(error_kind="bad_coordinates", params=params),
+        }
     x, y = p1
     x2, y2 = p2
     ok, reason = ensure_mutation_allowed(x, y, x2, y2)
     if not ok:
-        return {"success": False, "message": reason, "stderr": reason}
+        pol = "allow_regions" in reason or "outside_allow" in reason
+        return {
+            "success": False,
+            "message": reason,
+            "stderr": reason,
+            "computer_diagnostic": _computer_diagnostic(
+                error_kind="policy_blocked",
+                params=params,
+                resolved_point=(x, y),
+                allowlist_block=pol,
+                block_detail=reason,
+            ),
+        }
     try:
         pg = _import_pyautogui()
         pg.moveTo(x, y, duration=0.12)
@@ -243,11 +348,28 @@ def run_drag(params: dict[str, Any]) -> dict[str, Any]:
 def run_scroll(params: dict[str, Any]) -> dict[str, Any]:
     pt = resolve_screen_point(params)
     if not pt:
-        return {"success": False, "message": "bad_coordinates", "stderr": "missing_or_invalid_x_y"}
+        return {
+            "success": False,
+            "message": "bad_coordinates",
+            "stderr": "missing_or_invalid_x_y",
+            "computer_diagnostic": _computer_diagnostic(error_kind="bad_coordinates", params=params),
+        }
     x, y = pt
     ok, reason = ensure_mutation_allowed(x, y)
     if not ok:
-        return {"success": False, "message": reason, "stderr": reason}
+        pol = "allow_regions" in reason or "outside_allow" in reason
+        return {
+            "success": False,
+            "message": reason,
+            "stderr": reason,
+            "computer_diagnostic": _computer_diagnostic(
+                error_kind="policy_blocked",
+                params=params,
+                resolved_point=(x, y),
+                allowlist_block=pol,
+                block_detail=reason,
+            ),
+        }
     try:
         clicks = int(params.get("clicks") or 0)
     except (TypeError, ValueError):
@@ -267,7 +389,17 @@ def run_key(params: dict[str, Any]) -> dict[str, Any]:
         return {"success": False, "message": "missing_keys", "stderr": "params.keys required"}
     blocked, kw = blocked_by_sensitive_title()
     if blocked:
-        return {"success": False, "message": f"sensitive_foreground_title:{kw}", "stderr": "blocked"}
+        return {
+            "success": False,
+            "message": f"sensitive_foreground_title:{kw}",
+            "stderr": "blocked",
+            "computer_diagnostic": _computer_diagnostic(
+                error_kind="sensitive_foreground_title",
+                params=params,
+                allowlist_block=False,
+                block_detail=kw,
+            ),
+        }
     parts = [p.strip().lower() for p in raw.replace(" ", "").split("+") if p.strip()]
     if not parts:
         return {"success": False, "message": "empty_keys", "stderr": raw}
@@ -286,7 +418,17 @@ def run_type_text(params: dict[str, Any]) -> dict[str, Any]:
     text = str(params.get("text") or "")
     blocked, kw = blocked_by_sensitive_title()
     if blocked:
-        return {"success": False, "message": f"sensitive_foreground_title:{kw}", "stderr": "blocked"}
+        return {
+            "success": False,
+            "message": f"sensitive_foreground_title:{kw}",
+            "stderr": "blocked",
+            "computer_diagnostic": _computer_diagnostic(
+                error_kind="sensitive_foreground_title",
+                params=params,
+                allowlist_block=False,
+                block_detail=kw,
+            ),
+        }
     try:
         interval = float(params.get("interval") or 0.03)
     except (TypeError, ValueError):
@@ -297,6 +439,64 @@ def run_type_text(params: dict[str, Any]) -> dict[str, Any]:
         return {"success": True, "message": "computer_type_ok", "stdout": f"typed_len={len(text)}"}
     except Exception as e:
         return {"success": False, "message": "type_failed", "stderr": str(e)}
+
+
+def run_window_activate(params: dict[str, Any]) -> dict[str, Any]:
+    """按标题子串查找并激活（置前台）一个窗口。仅 Windows 支持。"""
+    title_hint = (params.get("title") or "").strip()
+    if not title_hint:
+        return {"success": False, "message": "missing_title_param", "stderr": "missing_title_param"}
+
+    if sys.platform != "win32":
+        return {"success": False, "message": "window_activate_windows_only", "stderr": "platform_not_supported"}
+
+    import ctypes
+    import ctypes.wintypes
+
+    u32 = ctypes.windll.user32
+
+    found: list[tuple[int, str]] = []
+    EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+
+    @EnumWindowsProc
+    def _enum_cb(hwnd: int, _lparam: int) -> bool:
+        if not u32.IsWindowVisible(hwnd):
+            return True
+        buf = ctypes.create_unicode_buffer(512)
+        u32.GetWindowTextW(hwnd, buf, 512)
+        title = buf.value or ""
+        if title_hint.lower() in title.lower():
+            found.append((hwnd, title))
+        return True
+
+    u32.EnumWindows(_enum_cb, 0)
+
+    if not found:
+        return {
+            "success": False,
+            "message": f"window_not_found:未找到标题含「{title_hint}」的窗口",
+            "stderr": f"window_not_found:{title_hint}",
+        }
+
+    hwnd, title = found[0]
+    SW_RESTORE = 9
+    try:
+        if u32.IsIconic(hwnd):
+            u32.ShowWindow(hwnd, SW_RESTORE)
+
+        # keybd_event(0,0,0,0) 给当前进程一个虚拟按键事件，使 SetForegroundWindow 不被 Windows 拒绝
+        u32.keybd_event(0, 0, 0, 0)
+        u32.BringWindowToTop(hwnd)
+        u32.SetForegroundWindow(hwnd)
+
+        time.sleep(0.3)
+        return {
+            "success": True,
+            "message": f"window_activated:已激活窗口「{title}」",
+            "stdout": f"activated_window={title!r}",
+        }
+    except Exception as e:
+        return {"success": False, "message": f"window_activate_failed:{e}", "stderr": str(e)}
 
 
 def run_wait(params: dict[str, Any]) -> dict[str, Any]:

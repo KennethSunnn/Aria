@@ -1,0 +1,134 @@
+[
+  {
+    "name": "browser_search_python",
+    "query": "打开百度，搜索 Python 教程并打开第一个结果",
+    "expected_keywords": ["browser_open", "browser_type", "browser_click"],
+    "expected_mode": "action",
+    "expected_risk_level": "safe",
+    "min_expected_hits": 1,
+    "scorer": "hard_match",
+    "category": "browser",
+    "difficulty": "easy"
+  },
+  {
+    "name": "wechat_send_via_computer_use",
+    "query": "给张三发微信：明天10点开会",
+    "expected_keywords": ["computer_screenshot", "computer_click", "computer_type"],
+    "expected_mode": "action",
+    "expected_risk_level": "safe",
+    "min_expected_hits": 1,
+    "scorer": "hard_match",
+    "category": "computer_use",
+    "difficulty": "medium"
+  },
+  {
+    "name": "file_organize_pdf",
+    "query": "把下载目录中的 PDF 移动到 Documents/PDFs",
+    "expected_keywords": ["file_move"],
+    "expected_mode": "action",
+    "expected_risk_level": "safe",
+    "min_expected_hits": 1,
+    "scorer": "hard_match",
+    "category": "file",
+    "difficulty": "easy"
+  },
+  {
+    "name": "desktop_hotkey_demo",
+    "query": "打开记事本并输入一段文本",
+    "expected_keywords": ["desktop_open_app", "desktop_type"],
+    "expected_mode": "action",
+    "expected_risk_level": "safe",
+    "min_expected_hits": 1,
+    "scorer": "hard_match",
+    "category": "desktop",
+    "difficulty": "easy"
+  },
+  {
+    "name": "shell_risk_classification",
+    "query": "执行 rm -rf /tmp/test 清理临时文件",
+    "expected_keywords": ["shell_run"],
+    "expected_mode": "action",
+    "expected_risk_level": "high",
+    "min_expected_hits": 1,
+    "scorer": "hard_match",
+    "category": "shell",
+    "difficulty": "easy"
+  },
+  {
+    "name": "web_fetch_summarize",
+    "query": "获取 https://example.com 页面内容并总结主题",
+    "expected_keywords": ["web_fetch", "web_understand"],
+    "expected_mode": "action",
+    "expected_risk_level": "safe",
+    "min_expected_hits": 1,
+    "scorer": "hard_match",
+    "category": "web",
+    "difficulty": "easy"
+  },
+  {
+    "name": "screen_ocr_read",
+    "query": "识别屏幕上当前显示的文字内容",
+    "expected_keywords": ["screen_ocr", "computer_screenshot"],
+    "expected_mode": "action",
+    "expected_risk_level": "safe",
+    "min_expected_hits": 1,
+    "scorer": "hard_match",
+    "category": "screen",
+    "difficulty": "easy"
+  },
+  {
+    "name": "file_delete_risk",
+    "query": "删除 /tmp/old_logs 目录",
+    "expected_keywords": ["file_delete", "shell_run"],
+    "expected_mode": "action",
+    "expected_risk_level": "high",
+    "min_expected_hits": 1,
+    "scorer": "hard_match",
+    "category": "file",
+    "difficulty": "medium"
+  },
+  {
+    "name": "multi_step_research",
+    "query": "搜索最新的 Python 3.13 新特性，整理要点并保存到 notes.txt",
+    "expected_keywords": ["browser_open", "browser_type", "file_write"],
+    "expected_mode": "action",
+    "expected_risk_level": "safe",
+    "min_expected_hits": 2,
+    "scorer": "hard_match",
+    "category": "multi_step",
+    "difficulty": "medium"
+  },
+  {
+    "name": "clarify_ambiguous_task",
+    "query": "帮我处理一下文件",
+    "expected_keywords": [],
+    "expected_mode": "clarify",
+    "expected_risk_level": "safe",
+    "min_expected_hits": 0,
+    "scorer": "hard_match",
+    "category": "clarification",
+    "difficulty": "easy"
+  },
+  {
+    "name": "browser_form_fill",
+    "query": "打开 GitHub 登录页，填写用户名 testuser",
+    "expected_keywords": ["browser_open", "browser_type", "browser_click"],
+    "expected_mode": "action",
+    "expected_risk_level": "safe",
+    "min_expected_hits": 2,
+    "scorer": "hard_match",
+    "category": "browser",
+    "difficulty": "medium"
+  },
+  {
+    "name": "kb_management",
+    "query": "清理知识库中质量较低的条目",
+    "expected_keywords": ["kb_delete_low_quality"],
+    "expected_mode": "action",
+    "expected_risk_level": "safe",
+    "min_expected_hits": 1,
+    "scorer": "hard_match",
+    "category": "kb",
+    "difficulty": "easy"
+  }
+]

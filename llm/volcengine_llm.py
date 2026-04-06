@@ -4,6 +4,7 @@ import json
 import os
 import re
 import time
+from collections.abc import Iterator
 from typing import Literal, Optional, cast
 
 from dotenv import load_dotenv
@@ -377,6 +378,149 @@ class VolcengineLLM:
                     return f"API调用失败：{self._sanitize_for_user(last_error)}\n\n{self._failure_hint()}", totals
 
         return f"API调用失败：{self._sanitize_for_user(last_error)}", totals
+
+    def generate_stream_chunks(
+        self,
+        messages,
+        model_name=None,
+        reasoning_effort: str | None = None,
+        usage_holder: list | None = None,
+    ) -> Iterator[str]:
+        """
+        流式 chat.completions：逐段 yield 可见文本（含部分网关返回的 reasoning 片段）。
+        结束时若传入 usage_holder，会 append 一个与 generate() 同结构的用量 dict（无用量时 llm_calls 仍计 1）。
+        """
+        totals: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "llm_calls": 0}
+        if usage_holder is not None and usage_holder:
+            raise ValueError("usage_holder must be an empty list when provided")
+
+        def _finish_usage() -> None:
+            if not totals["llm_calls"]:
+                totals["llm_calls"] = 1
+            if usage_holder is not None:
+                usage_holder.append(dict(totals))
+
+        if not self.api_key or not self._client:
+            _finish_usage()
+            yield from ()
+            return
+
+        selected_model = (model_name or self.model_name or "").strip() or self.model_name
+        thinking_feature_on = self._dashscope_thinking_extra()
+        multimodal = self._messages_have_multimodal_content(messages)
+        eff = _normalize_reasoning_effort(reasoning_effort)
+        is_ark = _is_ark_base_url(self.base_url)
+
+        if is_ark:
+            use_thinking = False
+        elif eff == "minimal":
+            use_thinking = False
+        elif eff in ("low", "medium", "high"):
+            use_thinking = thinking_feature_on and not multimodal
+        else:
+            use_thinking = thinking_feature_on and not multimodal
+
+        ark_reasoning_fallback_done = False
+        openai_messages = [
+            {"role": m.get("role", "user"), "content": m.get("content", "")} for m in (messages or [])
+        ]
+
+        while True:
+            try:
+                ark_eff = eff if is_ark and eff and not ark_reasoning_fallback_done else None
+                create_kwargs: dict = {
+                    "model": selected_model,
+                    "messages": openai_messages,
+                    "timeout": self.timeout_s,
+                    "stream": True,
+                    "stream_options": {"include_usage": True},
+                }
+                extra_body: dict = {}
+                if is_ark and ark_eff:
+                    extra_body["reasoning_effort"] = ark_eff
+                if use_thinking:
+                    extra_body["enable_thinking"] = True
+                if extra_body:
+                    create_kwargs["extra_body"] = extra_body
+
+                try:
+                    api_stream = self._client.chat.completions.create(**create_kwargs)
+                except TypeError:
+                    create_kwargs.pop("stream_options", None)
+                    api_stream = self._client.chat.completions.create(**create_kwargs)
+
+                got_content = False
+                for chunk in api_stream:
+                    self._merge_stream_chunk_usage_into(chunk, totals)
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    if delta is None:
+                        continue
+                    pieces: list[str] = []
+                    c = getattr(delta, "content", None)
+                    if isinstance(c, str) and c:
+                        pieces.append(c)
+                    rc = getattr(delta, "reasoning_content", None)
+                    if isinstance(rc, str) and rc:
+                        pieces.append(rc)
+                    for p in pieces:
+                        got_content = True
+                        yield p
+
+                if got_content:
+                    _finish_usage()
+                    return
+
+                last_err = "流式接口未返回正文"
+                if thinking_feature_on and use_thinking:
+                    use_thinking = False
+                    continue
+                if is_ark and eff and not ark_reasoning_fallback_done:
+                    ark_reasoning_fallback_done = True
+                    continue
+                raise RuntimeError(last_err)
+
+            except APIStatusError as e:
+                if self._is_invalid_api_key_error(e):
+                    raise
+                if (
+                    is_ark
+                    and eff
+                    and not ark_reasoning_fallback_done
+                    and e.status_code in (400, 422)
+                ):
+                    ark_reasoning_fallback_done = True
+                    continue
+                if thinking_feature_on and use_thinking and e.status_code in (400, 422):
+                    use_thinking = False
+                    continue
+                raise
+
+    def _merge_stream_chunk_usage_into(self, chunk, totals: dict[str, int]) -> None:
+        u = getattr(chunk, "usage", None)
+        if u is None:
+            return
+        if hasattr(u, "model_dump"):
+            d = u.model_dump()
+        elif isinstance(u, dict):
+            d = u
+        else:
+            d = {
+                "prompt_tokens": getattr(u, "prompt_tokens", None),
+                "completion_tokens": getattr(u, "completion_tokens", None),
+                "total_tokens": getattr(u, "total_tokens", None),
+            }
+        pt = int(d.get("prompt_tokens") or 0)
+        ct = int(d.get("completion_tokens") or 0)
+        tt = int(d.get("total_tokens") or 0)
+        if pt == 0 and ct == 0 and tt == 0:
+            return
+        if tt <= 0:
+            tt = pt + ct
+        totals["prompt_tokens"] = pt
+        totals["completion_tokens"] = ct
+        totals["total_tokens"] = tt
 
     def _failure_hint(self) -> str:
         if _is_ark_base_url(self.base_url):

@@ -1,0 +1,116 @@
+# ARIA 主测试计划
+# 运行方式：python scripts/run_test_plan.py --plan main_plan.yaml --tier <smoke|ci|full>
+#
+# 四层结构（金字塔）：
+#   smoke      → 阻断式快速冒烟（< 30s），任意失败立即终止
+#   ci         → smoke + unit + regression，适合每次 PR
+#   full       → ci + eval（Pass@k），适合夜间 / 发布前
+
+plan_id: main_plan_v1
+description: ARIA 主测试计划 —— 逻辑层单元、回归基准、Pass@k 评估
+
+# 默认 CI 调度：每次 push 到 main / PR 由 GitHub Actions 触发
+# 夜间全量：每天 02:17 本地时间（TriggerScheduler 格式）
+schedule: "17 2 * * *"
+
+# 全局通过阈值（任意 suite 低于此值则整体报警）
+min_suite_pass_rate: 1.0   # 单元/回归要求 100%
+min_eval_pass_at_k: 0.70   # Pass@k 警戒线
+
+suites:
+  # ------------------------------------------------------------------
+  # tier: smoke — 最轻量，阻断式
+  # ------------------------------------------------------------------
+  - id: smoke_unit
+    description: "核心守卫：action 注册表一致性 + 权限模型"
+    tier: smoke
+    priority: 1
+    type: pytest
+    marks: ""
+    paths:
+      - tests/test_action_registry_consistency.py
+      - tests/test_taor_permissions.py
+      - tests/test_shell_danger.py
+    fail_fast: true          # 本 suite 内任意失败立即停止
+    timeout_seconds: 60
+
+  # ------------------------------------------------------------------
+  # tier: ci — 每次 PR 完整单元测试
+  # ------------------------------------------------------------------
+  - id: unit_automation
+    description: "自动化工具层单元测试（Browser / Desktop / Computer Use）"
+    tier: ci
+    priority: 2
+    type: pytest
+    paths:
+      - tests/test_automation_browser.py
+      - tests/test_automation_desktop.py
+      - tests/test_computer_use_extended.py
+      - tests/test_computer_use.py
+    timeout_seconds: 120
+
+  - id: unit_runtime
+    description: "运行时单元测试（TAOR / 调度器 / HybridPlanner / 权限）"
+    tier: ci
+    priority: 3
+    type: pytest
+    paths:
+      - tests/test_runtime_autonomy_loop.py
+      - tests/test_runtime_scheduler.py
+      - tests/test_hybrid_planner.py
+      - tests/test_timing_breakdown.py
+    timeout_seconds: 120
+
+  - id: unit_memory
+    description: "记忆层单元测试"
+    tier: ci
+    priority: 4
+    type: pytest
+    paths:
+      - tests/test_auto_memory_prompt_fragment.py
+      - tests/test_mcp_memory_chain.py
+    timeout_seconds: 60
+
+  - id: unit_misc
+    description: "其余单元测试（附件、人格、housekeeping）"
+    tier: ci
+    priority: 5
+    type: pytest
+    paths:
+      - tests/test_chat_attachments_cad.py
+      - tests/test_personality_catalog_coverage.py
+      - tests/test_housekeeping.py
+      - tests/test_harness_controls.py
+      - tests/test_unified_app_intent.py
+    timeout_seconds: 60
+
+  - id: regression_planner
+    description: "Planner 回归基准（包含 browser/desktop mock 场景）"
+    tier: ci
+    priority: 6
+    type: script
+    script: scripts/run_regression_benchmark.py
+    args:
+      - --min-match-rate
+      - "0.60"
+      - --min-strict-pass-rate
+      - "0.50"
+      - --min-runtime-loop-pass-rate
+      - "0.75"
+    timeout_seconds: 300
+
+  # ------------------------------------------------------------------
+  # tier: full — 夜间 / 发布前
+  # ------------------------------------------------------------------
+  - id: eval_pass_at_k
+    description: "Pass@k 统计评估（k=5，全量 12 cases）"
+    tier: full
+    priority: 7
+    type: script
+    script: scripts/run_evaluation.py
+    args:
+      - --k
+      - "5"
+      - --min-avg-pass-at-k
+      - "0.70"
+    timeout_seconds: 600
